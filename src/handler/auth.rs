@@ -7,7 +7,10 @@ use teloxide::types::UserId;
 use tokio::sync::Mutex;
 
 use crate::{
-    handler::{Request, Response},
+    handler::{
+        Request,
+        Response::{self, *},
+    },
     mastodon,
 };
 
@@ -15,10 +18,7 @@ static AUTH_REG_CACHE: Lazy<Mutex<HashMap<UserId, Registered>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>, Response<'_>> {
-    let user = req
-        .msg
-        .from()
-        .ok_or_else(|| Response::ReplyTo("No user.".into()))?;
+    let user = req.msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
 
     let client = mastodon::Client::new(Arc::clone(&req.state));
 
@@ -33,7 +33,7 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
             .into(),
         };
 
-        return Err(Response::ReplyTo(
+        return Err(ReplyTo(
             format!("{response}\n\nformat: /auth <domain or auth-code>").into(),
         ));
     }
@@ -51,15 +51,13 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
 
             let reg = res.map_err(|err| {
                 error!("failed to create mastodon client for domain '{domain}'. err: '{err}'");
-                Response::ReplyTo(
-                    format!("Failed to login mastodon for domain '{domain}'.\n\n{err}").into(),
-                )
+                ReplyTo(format!("Failed to login mastodon for domain '{domain}'.\n\n{err}").into())
             })?;
             let url = reg.authorize_url().unwrap(); // We have made sure it has a value in `struct Client`
 
             auth_reg_cache.insert(user.id, reg);
 
-            Ok(Response::ReplyTo(
+            Ok(ReplyTo(
                 format!("Please click this link to authorize:\n\n{url}\n\nThen send back the auth code with command /auth.").into(),
             ))
         }
@@ -75,7 +73,7 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
 
             let _login_user = res.map_err(|err| {
                 error!("failed to authorize for domain '{domain}' with auth code '{auth_code}'. err: '{err}'");
-                Response::ReplyTo(format!("Failed to authorize for domain '{domain}' with auth code '{auth_code}'.\n\n{err}\n\nPlease send /auth <domain> to restart authorization.", ).into())
+                ReplyTo(format!("Failed to authorize for domain '{domain}' with auth code '{auth_code}'.\n\n{err}\n\nPlease send /auth <domain> to restart authorization.", ).into())
             })?;
 
             info!(
@@ -83,21 +81,18 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
                 user.id
             );
 
-            Ok(Response::ReplyTo("Authorized successfully.".into()))
+            Ok(ReplyTo("Authorized successfully.".into()))
         }
     }
 }
 
 pub async fn revoke(req: &Request) -> Result<Response<'_>, Response<'_>> {
-    let user = req
-        .msg
-        .from()
-        .ok_or_else(|| Response::ReplyTo("No user.".into()))?;
+    let user = req.msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
 
     let client = mastodon::Client::new(Arc::clone(&req.state));
 
     match client.login(user.id).await {
-        Err(_) => Err(Response::ReplyTo(
+        Err(_) => Err(ReplyTo(
             "You have not linked your mastodon account yet.\n\nUsing /auth command to link one."
                 .into(),
         )),
@@ -108,7 +103,7 @@ pub async fn revoke(req: &Request) -> Result<Response<'_>, Response<'_>> {
 
             client.revoke(&login_user).await.map_err(|err| {
                 error!("failed to revoke mastodon auth for domain '{domain}'. err: '{err}'");
-                Response::ReplyTo(
+                ReplyTo(
                     format!("Failed to revoke mastodon auth for domain '{domain}'.\n\n{err}")
                         .into(),
                 )
@@ -119,7 +114,7 @@ pub async fn revoke(req: &Request) -> Result<Response<'_>, Response<'_>> {
                 user.id
             );
 
-            Ok(Response::ReplyTo("Revoked successfully.".into()))
+            Ok(ReplyTo("Revoked successfully.".into()))
         }
     }
 }

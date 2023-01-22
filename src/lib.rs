@@ -3,6 +3,7 @@ pub mod config;
 mod db;
 mod handler;
 mod mastodon;
+mod util;
 
 use std::sync::Arc;
 

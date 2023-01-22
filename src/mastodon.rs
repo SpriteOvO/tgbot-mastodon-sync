@@ -1,10 +1,16 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use mastodon_async::{prelude::*, registration::Registered, scopes, Language, Result as MResult};
+use const_format::formatcp;
+use mastodon_async::{
+    entities::attachment::Attachment, prelude::*, registration::Registered, scopes,
+    Result as MResult,
+};
+pub use mastodon_async::{Language, StatusBuilder, Visibility};
 use serde_json as json;
 use spdlog::prelude::*;
 use teloxide::types::UserId;
+use tokio::{fs::File, io::AsyncRead};
 
 use crate::{config, InstanceState};
 
@@ -28,7 +34,7 @@ impl Client {
     pub async fn auth_step_1(&self, domain: impl Into<String>) -> MResult<Registered> {
         let registration = Registration::new(domain)
             .client_name(config::PACKAGE.name)
-            .scopes(Scopes::write(scopes::Write::Statuses))
+            .scopes(Scopes::write(scopes::Write::Statuses).and(Scopes::write(scopes::Write::Media)))
             .build()
             .await?;
 
@@ -124,13 +130,32 @@ impl LoginUser {
     pub fn domain(&self) -> &str {
         &self.inst.data.base
     }
-    pub async fn post_status(&self, text: impl Into<String>) -> anyhow::Result<String> {
-        let status = StatusBuilder::new()
-            .status(text)
-            .visibility(Visibility::Public)
-            .language(Language::Eng)
-            .build()?;
 
+    pub async fn attach_media(
+        &self,
+        mut data: impl AsyncRead + Unpin,
+        description: Option<String>,
+    ) -> anyhow::Result<Attachment> {
+        // TODO: Do not write out files when https://github.com/dscottboggs/mastodon-async/issues/60 is implemented
+
+        let temp_file = tempfile::Builder::new()
+            .prefix(formatcp!(".{}.", env!("CARGO_PKG_NAME")))
+            .tempfile()?;
+        let temp_file = temp_file.path();
+
+        let mut file = File::create(temp_file).await?;
+
+        trace!("downloading to temp file '{}'", temp_file.display());
+        tokio::io::copy(&mut data, &mut file).await?;
+
+        trace!("download done, uploading it");
+        let attachment = self.inst.media(temp_file, description).await?;
+
+        trace!("upload done");
+        Ok(attachment)
+    }
+
+    pub async fn post_status(&self, status: NewStatus) -> anyhow::Result<String> {
         let posted = self.inst.new_status(status).await?;
         let url = posted.url.unwrap_or_else(|| "*invisible*".to_string());
 
