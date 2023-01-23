@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use spdlog::prelude::*;
 use teloxide::{
     net::Download,
     requests::Requester,
-    types::{FileMeta, MediaKind::*},
+    types::{FileMeta, MediaKind::*, MessageEntity, MessageEntityKind, MessageEntityRef},
 };
 use tokio::io;
 
@@ -104,9 +104,11 @@ pub async fn handle(req: &Request) -> Result<Response<'_>, Response<'_>> {
 
         status.media_ids(attachments.into_iter().map(|a| a.id));
 
-        status.status(media.caption().unwrap_or(""));
+        status
+            .status(format_text(media.caption(), media.entities()))
+            .sensitive(media.iter().any(|media| media.has_media_spoiler()));
     } else {
-        status.status(reply_to_msg.text().unwrap_or(""));
+        status.status(format_text(reply_to_msg.text(), reply_to_msg.entities()));
     }
 
     let status = status.build().map_err(|err| {
@@ -122,4 +124,30 @@ pub async fn handle(req: &Request) -> Result<Response<'_>, Response<'_>> {
     Ok(ReplyTo(
         format!("Synchronized successfully.\n\n{posted_url}").into(),
     ))
+}
+
+fn format_text<'a>(
+    caption: Option<&'a str>,
+    entities: Option<&'a [MessageEntity]>,
+) -> Cow<'a, str> {
+    let caption = caption.unwrap_or("");
+    if caption.is_empty() {
+        return "".into();
+    }
+
+    if entities.is_none() || entities.unwrap().is_empty() {
+        return caption.into();
+    }
+
+    let entities = MessageEntityRef::parse(caption, entities.unwrap());
+    let mut caption = caption.to_owned();
+
+    entities.iter().rev().for_each(|entity| {
+        if let MessageEntityKind::TextLink { url } = entity.kind() {
+            caption.insert_str(entity.end(), &format!("]({url}) "));
+            caption.insert_str(entity.start(), " [");
+        }
+    });
+
+    caption.into()
 }

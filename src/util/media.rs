@@ -8,7 +8,7 @@ use teloxide::{
     types::{
         FileMeta,
         MediaKind::{self as InnerMediaKind, *},
-        MessageId, MessageKind, PhotoSize,
+        MessageEntity, MessageId, MessageKind, PhotoSize,
     },
 };
 
@@ -43,12 +43,39 @@ impl MediaKind {
             Animation(m) => m.caption.as_deref(),
             Audio(m) => m.caption.as_deref(),
             Document(m) => m.caption.as_deref(),
+            Game(m) => m.game.text.as_deref(),
             Photo(m) => m.caption.as_deref(),
             Text(m) => Some(&*m.text),
             Video(m) => m.caption.as_deref(),
             Voice(m) => m.caption.as_deref(),
-            Contact(_) | Game(_) | Venue(_) | Location(_) | Poll(_) | Sticker(_) | VideoNote(_)
+            Contact(_) | Venue(_) | Location(_) | Poll(_) | Sticker(_) | VideoNote(_)
             | Migration(_) => None,
+        }
+    }
+
+    pub fn entities(&self) -> Option<&[MessageEntity]> {
+        let caption_entities = match &self.0 {
+            Animation(m) => &m.caption_entities,
+            Audio(m) => &m.caption_entities,
+            Document(m) => &m.caption_entities,
+            Game(m) => return m.game.text_entities.as_deref(),
+            Photo(m) => &m.caption_entities,
+            Text(m) => &m.entities,
+            Video(m) => &m.caption_entities,
+            Voice(m) => &m.caption_entities,
+            Contact(_) | Venue(_) | Location(_) | Poll(_) | Sticker(_) | VideoNote(_)
+            | Migration(_) => return None,
+        };
+        Some(caption_entities)
+    }
+
+    pub fn has_media_spoiler(&self) -> bool {
+        match &self.0 {
+            Animation(m) => m.has_media_spoiler,
+            Photo(m) => m.has_media_spoiler,
+            Video(m) => m.has_media_spoiler,
+            Audio(_) | Contact(_) | Document(_) | Game(_) | Venue(_) | Location(_) | Poll(_)
+            | Sticker(_) | Text(_) | VideoNote(_) | Voice(_) | Migration(_) => false,
         }
     }
 
@@ -97,6 +124,16 @@ impl Media {
         match self {
             Self::Single(media) => media.caption(),
             Self::Group { medias, .. } => medias.iter().find_map(|m| m.caption()),
+        }
+    }
+
+    pub fn entities(&self) -> Option<&[MessageEntity]> {
+        match self {
+            Self::Single(media) => media.entities(),
+            Self::Group { medias, .. } => medias
+                .iter()
+                .find(|m| m.caption().is_some())
+                .and_then(|m| m.entities()),
         }
     }
 
