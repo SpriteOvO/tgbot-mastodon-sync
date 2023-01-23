@@ -7,7 +7,10 @@ mod post;
 use std::{borrow::Cow, sync::Arc};
 
 use spdlog::prelude::*;
-use teloxide::{prelude::*, types::Me};
+use teloxide::{
+    prelude::*,
+    types::{ChatKind, Me},
+};
 
 use crate::{cmd::Command, util::media, InstanceState};
 
@@ -125,8 +128,23 @@ async fn handle_command<'a>(
         Command::Ping => ping::handle(req).await,
         #[cfg(debug_assertions)]
         Command::Debug(arg) => debug::handle(req, arg).await,
-        Command::Auth(arg) => auth::auth(req, arg).await,
-        Command::Revoke => auth::revoke(req).await,
+        Command::Auth(arg) => {
+            require_private(req)?;
+            auth::auth(req, arg).await
+        }
+        Command::Revoke => {
+            require_private(req)?;
+            auth::revoke(req).await
+        }
         Command::Post => post::handle(req).await,
+    }
+}
+
+fn require_private(req: &Request) -> Result<(), Response<'_>> {
+    match req.meta.msg.chat.kind {
+        ChatKind::Private(_) => Ok(()),
+        ChatKind::Public(_) => Err(ReplyTo(
+            "This command is only available in direct messages.".into(),
+        )),
     }
 }
