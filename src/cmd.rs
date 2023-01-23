@@ -8,6 +8,8 @@ pub enum Command {
     #[cfg(debug_assertions)]
     #[command(description = "off")]
     Debug(String),
+    #[command(description = "off")]
+    Start,
     #[command(description = "link your mastodon account")]
     Auth(String),
     #[command(description = "unlink your mastodon account")]

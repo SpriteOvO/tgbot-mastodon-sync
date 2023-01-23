@@ -3,6 +3,7 @@ mod auth;
 mod debug;
 mod ping;
 mod post;
+mod start;
 
 use std::{borrow::Cow, sync::Arc};
 
@@ -128,6 +129,7 @@ async fn handle_command<'a>(
         Command::Ping => ping::handle(req).await,
         #[cfg(debug_assertions)]
         Command::Debug(arg) => debug::handle(req, arg).await,
+        Command::Start => start::handle(req).await,
         Command::Auth(arg) => {
             require_private(req)?;
             auth::auth(req, arg).await
