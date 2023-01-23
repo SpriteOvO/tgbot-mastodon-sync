@@ -1,0 +1,69 @@
+{
+  "db": "SQLite",
+  "197680abd1e0748f946b0eb251abe98f27993cf60322ffed29316174c3a4b3f0": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Right": 1
+      }
+    },
+    "query": "\nDELETE FROM mastodon_login_user\nWHERE tg_user_id = ?1\n        "
+  },
+  "4e9e4908c1bc5f68c5876dc9c3e08179da25d479d46afa2034ac6c696087078c": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Right": 2
+      }
+    },
+    "query": "\nINSERT OR REPLACE INTO mastodon_login_user ( tg_user_id, mastodon_async_data )\nVALUES ( ?1, ?2 )\n        "
+  },
+  "b34e77710302775faff2d7fd94e14e9abed360df4690cfcb8cadfa88dd5dc35d": {
+    "describe": {
+      "columns": [
+        {
+          "name": "mastodon_async_data",
+          "ordinal": 0,
+          "type_info": "Text"
+        }
+      ],
+      "nullable": [
+        false
+      ],
+      "parameters": {
+        "Right": 1
+      }
+    },
+    "query": "\nSELECT mastodon_async_data\nFROM mastodon_login_user\nWHERE tg_user_id = ?1\n        "
+  },
+  "c44b4f7267d46abfe8614de8c6b7754cf2fa657b43773396a37ee5038fe12d88": {
+    "describe": {
+      "columns": [
+        {
+          "name": "media_json",
+          "ordinal": 0,
+          "type_info": "Text"
+        }
+      ],
+      "nullable": [
+        false
+      ],
+      "parameters": {
+        "Right": 1
+      }
+    },
+    "query": "\nSELECT media_json\nFROM telegram_media_group\nWHERE group_id = ?1\nORDER BY msg_id\n        "
+  },
+  "cabdeabbaec8a6204439bc3f1b860237cd669d5188c609105bd117655f57c0a6": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Right": 3
+      }
+    },
+    "query": "\nINSERT OR REPLACE INTO telegram_media_group ( group_id, msg_id, media_json )\nVALUES ( ?1, ?2, ?3 )\n        "
+  }
+}

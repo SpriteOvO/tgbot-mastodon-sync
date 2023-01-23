@@ -15,6 +15,8 @@ impl Pool {
 
         info!("database connected");
 
+        sqlx::migrate!().run(&pool).await?;
+
         Ok(Self { pool })
     }
 
