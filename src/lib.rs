@@ -7,6 +7,7 @@ mod util;
 
 use std::sync::Arc;
 
+use cmd::Command;
 use spdlog::prelude::*;
 use teloxide::{
     prelude::*,
@@ -30,20 +31,26 @@ pub async fn run(bot_token: impl Into<String>, db_url: impl AsRef<str>) -> anyho
     let bot = Bot::new(bot_token);
     let inst_state = InstanceState::new(db_url).await?;
 
-    bot.set_my_commands(cmd::Command::bot_commands()).await?;
+    bot.set_my_commands(Command::bot_commands()).await?;
 
     let handler = Update::filter_message()
-        .branch(dptree::entry().filter_command::<cmd::Command>().endpoint(
-        |state: Arc<InstanceState>, bot: Bot, me: Me, msg: Message, cmd: cmd::Command| async move {
-            let req = handler::Request::new(state, bot, me, msg, cmd);
-            handler::handle(req).await
-        },
-    ));
+        .inspect_async(
+            |state: Arc<InstanceState>, bot: Bot, me: Me, msg: Message| async move {
+                let req = handler::Request::new_message(state, bot, me, msg);
+                _ = handler::handle(req).await;
+            },
+        )
+        .branch(dptree::entry().filter_command::<Command>().endpoint(
+            |state: Arc<InstanceState>, bot: Bot, me: Me, msg: Message, cmd: Command| async move {
+                let req = handler::Request::new_command(state, bot, me, msg, cmd);
+                handler::handle(req).await
+            },
+        ));
 
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![inst_state])
         .default_handler(|upd| async move {
-            trace!("unhandled update: {upd:?}");
+            debug!("unhandled update: {upd:?}");
         })
         .error_handler(Arc::new(
             |err| async move { error!("dispatcher error: {err}") },

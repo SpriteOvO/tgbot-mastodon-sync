@@ -1,16 +1,22 @@
 use std::sync::Arc;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use const_format::formatcp;
 use mastodon_async::{
-    entities::attachment::Attachment, prelude::*, registration::Registered, scopes,
-    Result as MResult,
+    entities::{attachment::Attachment, status::Status},
+    prelude::*,
+    registration::Registered,
+    scopes, Error as MError, Result as MResult,
 };
 pub use mastodon_async::{Language, StatusBuilder, Visibility};
 use serde_json as json;
 use spdlog::prelude::*;
 use teloxide::types::UserId;
-use tokio::{fs::File, io::AsyncRead};
+use tokio::{
+    fs::File,
+    io::AsyncRead,
+    time::{self, Duration},
+};
 
 use crate::{config, InstanceState};
 
@@ -75,7 +81,7 @@ impl Client {
 
         sqlx::query!(
             r#"
-INSERT OR REPLACE INTO login_users ( tg_user_id, mastodon_async_data )
+INSERT OR REPLACE INTO mastodon_login_user ( tg_user_id, mastodon_async_data )
 VALUES ( ?1, ?2 )
         "#,
             tg_user_id,
@@ -93,7 +99,7 @@ VALUES ( ?1, ?2 )
         let record = sqlx::query!(
             r#"
 SELECT mastodon_async_data
-FROM login_users
+FROM mastodon_login_user
 WHERE tg_user_id = ?1
         "#,
             tg_user_id_num,
@@ -109,7 +115,7 @@ WHERE tg_user_id = ?1
 
         _ = sqlx::query!(
             r#"
-DELETE FROM login_users
+DELETE FROM mastodon_login_user
 WHERE tg_user_id = ?1
         "#,
             tg_user_id_num,
@@ -139,7 +145,7 @@ impl LoginUser {
         // TODO: Do not write out files when https://github.com/dscottboggs/mastodon-async/issues/60 is implemented
 
         let temp_file = tempfile::Builder::new()
-            .prefix(formatcp!(".{}.", env!("CARGO_PKG_NAME")))
+            .prefix(formatcp!(".{}.", config::PACKAGE.name))
             .tempfile()?;
         let temp_file = temp_file.path();
 
@@ -156,7 +162,11 @@ impl LoginUser {
     }
 
     pub async fn post_status(&self, status: NewStatus) -> anyhow::Result<String> {
-        let posted = self.inst.new_status(status).await?;
+        let posted = tokio::select! {
+            r = self.post_status_retry(status, config::WAITING_FOR_SERVER_PROCESS_MEDIA_INTERVAL) => r,
+            _ = time::sleep(config::WAITING_FOR_SERVER_PROCESS_MEDIA_TIMEOUT) => bail!("timeout waiting for server processing media")
+        }?;
+
         let url = posted.url.unwrap_or_else(|| "*invisible*".to_string());
 
         info!("tg user '{}' status posted: {url}", self.tg_user_id);
@@ -165,6 +175,29 @@ impl LoginUser {
 }
 
 impl LoginUser {
+    // TODO: Hacky for https://github.com/dscottboggs/mastodon-async/issues/61
+    pub async fn post_status_retry(
+        &self,
+        status: NewStatus,
+        interval: Duration,
+    ) -> anyhow::Result<Status> {
+        loop {
+            match self.inst.new_status(status.clone()).await {
+                Ok(posted) => return Ok(posted),
+                Err(MError::Api { status, response }) => {
+                    let err_text = "Cannot attach files that have not finished processing. Try again in a moment!";
+                    if status.as_u16() == 422 && response.error == err_text {
+                        time::sleep(interval).await;
+                        continue;
+                    } else {
+                        return Err(MError::Api { status, response }.into());
+                    }
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+    }
+
     fn serialize(&self) -> String {
         json::to_string(&self.inst.data).unwrap()
     }

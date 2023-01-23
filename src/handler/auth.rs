@@ -18,9 +18,11 @@ static AUTH_REG_CACHE: Lazy<Mutex<HashMap<UserId, Registered>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>, Response<'_>> {
-    let user = req.msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
+    let (state, msg) = (&req.meta.state, &req.meta.msg);
 
-    let client = mastodon::Client::new(Arc::clone(&req.state));
+    let user = msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
+
+    let client = mastodon::Client::new(Arc::clone(state));
 
     let arg = arg.into();
     if arg.is_empty() {
@@ -87,9 +89,11 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
 }
 
 pub async fn revoke(req: &Request) -> Result<Response<'_>, Response<'_>> {
-    let user = req.msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
+    let (state, msg) = (&req.meta.state, &req.meta.msg);
 
-    let client = mastodon::Client::new(Arc::clone(&req.state));
+    let user = msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
+
+    let client = mastodon::Client::new(Arc::clone(state));
 
     match client.login(user.id).await {
         Err(_) => Err(ReplyTo(
