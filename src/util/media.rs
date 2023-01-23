@@ -107,7 +107,12 @@ impl Media {
         };
 
         let result = match msg.media_group_id() {
-            None => Self::Single(Box::new(MediaKind(msgc.media_kind.clone()))),
+            None => {
+                if let Text(_) = msgc.media_kind {
+                    return Ok(None);
+                }
+                Self::Single(Box::new(MediaKind(msgc.media_kind.clone())))
+            }
             Some(media_group_id) => {
                 let medias = query_media_group(state, media_group_id)
                     .await
