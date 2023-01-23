@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+    - name: Install nightly
+      run: |
+        rustup toolchain install nightly
+        rustup component add rustfmt --toolchain nightly
+    - name: Restore cargo caches
+      uses: Swatinem/rust-cache@v2
+    - name: Check formatting
+      run: cargo +nightly fmt --all --verbose -- --check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+    - name: Install Rust
+      run: rustup toolchain install stable
+    - name: Install dependencies
+      run: cargo install sqlx-cli
+    - name: Restore cargo caches
+      uses: Swatinem/rust-cache@v2
+    - name: Run tests
+      run: cargo test --verbose
+
+  check-sqlx:
+    env:
+      DATABASE_URL: sqlite:/tmp/tgbot-mastodon-sync-db.sqlite?mode=rwc
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+    - name: Install Rust
+      run: rustup toolchain install stable
+    - name: Install dependencies
+      run: cargo install sqlx-cli
+    - name: Restore cargo caches
+      uses: Swatinem/rust-cache@v2
+    - name: Migrate database
+      run: sqlx migrate run
+    - name: Check sqlx offline metadata
+      run: cargo sqlx prepare --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+    - name: Install Rust
+      run: rustup toolchain install stable
+    - name: Restore cargo caches
+      uses: Swatinem/rust-cache@v2
+    - name: Run clippy
+      run: cargo clippy --all-features --tests --examples -- -D warnings -A dead-code
+
+  install:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+    - name: Install Rust
+      run: rustup toolchain install stable
+    - name: Restore cargo caches
+      uses: Swatinem/rust-cache@v2
+    - name: Install package
+      run: cargo install --path . --verbose
