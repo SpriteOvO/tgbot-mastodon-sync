@@ -40,6 +40,7 @@ impl Client {
     pub async fn auth_step_1(&self, domain: impl Into<String>) -> MResult<Registered> {
         let registration = Registration::new(domain)
             .client_name(config::PACKAGE.name)
+            .website("https://github.com/SpriteOvO/tgbot-mastodon-sync")
             .scopes(Scopes::write(scopes::Write::Statuses).and(Scopes::write(scopes::Write::Media)))
             .build()
             .await?;
