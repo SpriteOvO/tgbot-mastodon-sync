@@ -24,6 +24,7 @@ struct RequestMeta {
 
 enum RequestKind {
     NewMessage,
+    EditedMessage,
     Command(Command),
 }
 
@@ -42,6 +43,18 @@ impl Request {
                 msg,
             },
             kind: RequestKind::NewMessage,
+        }
+    }
+
+    pub fn edited_message(state: Arc<InstanceState>, bot: Bot, me: Me, msg: Message) -> Self {
+        Self {
+            meta: RequestMeta {
+                state,
+                bot,
+                me,
+                msg,
+            },
+            kind: RequestKind::EditedMessage,
         }
     }
 
@@ -104,6 +117,7 @@ pub async fn handle(req: Request) -> Result<(), teloxide::RequestError> {
 async fn handle_kind(req: &Request) -> Result<Response<'_>, Response<'_>> {
     match &req.kind {
         RequestKind::NewMessage => handle_new_message(req).await,
+        RequestKind::EditedMessage => handle_edited_message(req).await,
         RequestKind::Command(cmd) => handle_command(req, cmd).await,
     }
 }
@@ -117,7 +131,20 @@ async fn handle_new_message(req: &Request) -> Result<Response<'_>, Response<'_>>
         msg.id
     );
 
-    media::on_new_message(state, msg).await;
+    media::on_new_or_edited_message(state, msg).await;
+    Ok(Nothing)
+}
+
+async fn handle_edited_message(req: &Request) -> Result<Response<'_>, Response<'_>> {
+    let (state, msg) = (&req.meta.state, &req.meta.msg);
+
+    trace!(
+        "edited message. chat id '{}', msg id '{}'",
+        msg.chat.id,
+        msg.id
+    );
+
+    media::on_new_or_edited_message(state, msg).await;
     Ok(Nothing)
 }
 

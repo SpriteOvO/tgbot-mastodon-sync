@@ -166,7 +166,7 @@ impl Media {
     }
 }
 
-pub async fn on_new_message(inst_state: &InstanceState, msg: &Message) {
+pub async fn on_new_or_edited_message(inst_state: &InstanceState, msg: &Message) {
     let msgc = match &msg.kind {
         MessageKind::Common(common) => common,
         _ => return,
