@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use anyhow::{anyhow, bail};
 use const_format::formatcp;
@@ -6,7 +6,7 @@ use mastodon_async::{
     entities::{attachment::Attachment, status::Status},
     prelude::*,
     registration::Registered,
-    scopes, Error as MError, Result as MResult,
+    scopes, Error as MError,
 };
 pub use mastodon_async::{Language, StatusBuilder, Visibility};
 use serde_json as json;
@@ -37,28 +37,32 @@ impl Client {
         Ok(login_user)
     }
 
-    pub async fn auth_step_1(&self, domain: impl Into<String>) -> MResult<Registered> {
-        let registration = Registration::new(domain)
-            .client_name(config::PACKAGE.name)
-            .website("https://github.com/SpriteOvO/tgbot-mastodon-sync")
-            .scopes(Scopes::write(scopes::Write::Statuses).and(Scopes::write(scopes::Write::Media)))
-            .build()
-            .await?;
+    pub async fn authorization_url(&self, domain: impl AsRef<str>) -> anyhow::Result<String> {
+        let domain = domain.as_ref();
 
-        // Make sure the url is not `None` so that we can directly unwrap it later
-        registration.authorize_url()?;
+        let client = self.register_client(domain).await.map_err(|err| {
+            error!("failed to register client for domain '{domain}', err: '{err}'");
+            anyhow!("Failed to register client for domain '{domain}\n\n{err}")
+        })?;
 
-        Ok(registration)
+        Ok(client.authorize_url()?)
     }
 
-    pub async fn auth_step_2(
+    pub async fn authorize(
         &self,
-        reg: &Registered,
+        domain: impl AsRef<str>,
         tg_user_id: UserId,
         auth_code: impl AsRef<str>,
     ) -> anyhow::Result<LoginUser> {
+        let domain = domain.as_ref();
+
+        let client = self.register_client(domain).await.map_err(|err| {
+            error!("failed to query client for domain '{domain}', err: '{err}'");
+            anyhow!("Failed to query client for domain '{domain}\n\n{err}")
+        })?;
+
         let login_user = LoginUser {
-            inst: reg.complete(auth_code.as_ref()).await?,
+            inst: client.complete(auth_code.as_ref()).await?,
             tg_user_id,
         };
         self.save_login_user(tg_user_id, &login_user)
@@ -69,6 +73,31 @@ impl Client {
 
     pub async fn revoke(&self, login_user: &LoginUser) -> anyhow::Result<()> {
         self.delete_login_user(login_user.tg_user_id).await
+    }
+}
+
+impl Client {
+    pub async fn register_client(&self, domain: impl AsRef<str>) -> anyhow::Result<Registered> {
+        let domain = domain.as_ref();
+
+        let client = match self.query_client(domain).await {
+            Ok(client) => client,
+            Err(_) => {
+                let client = Registration::new(domain)
+                    .client_name(config::PACKAGE.name)
+                    .website("https://github.com/SpriteOvO/tgbot-mastodon-sync")
+                    .scopes(
+                        Scopes::write(scopes::Write::Statuses)
+                            .and(Scopes::write(scopes::Write::Media)),
+                    )
+                    .build()
+                    .await?;
+                self.save_client(&client).await?;
+                client
+            }
+        };
+
+        Ok(client)
     }
 }
 
@@ -125,6 +154,53 @@ WHERE tg_user_id = ?1
         .await?;
 
         Ok(())
+    }
+
+    async fn save_client(&self, client: &Registered) -> anyhow::Result<()> {
+        let (domain, client_id, client_secret, redirect, scopes, force_login) =
+            client.clone().into_parts();
+        let scopes = scopes.to_string();
+
+        sqlx::query!(
+            r#"
+INSERT INTO mastodon_client ( domain, client_id, client_secret, redirect, scopes, force_login )
+VALUES ( ?1, ?2, ?3, ?4, ?5, ?6 )
+        "#,
+            domain,
+            client_id,
+            client_secret,
+            redirect,
+            scopes,
+            force_login
+        )
+        .execute(self.inst_state.db.pool())
+        .await?;
+
+        Ok(())
+    }
+
+    async fn query_client(&self, domain: impl AsRef<str>) -> anyhow::Result<Registered> {
+        let domain = domain.as_ref();
+
+        let record = sqlx::query!(
+            r#"
+SELECT client_id, client_secret, redirect, scopes, force_login
+FROM mastodon_client
+WHERE domain = ?1
+        "#,
+            domain,
+        )
+        .fetch_one(self.inst_state.db.pool())
+        .await?;
+
+        Ok(Registered::from_parts(
+            domain,
+            &record.client_id,
+            &record.client_secret,
+            &record.redirect,
+            FromStr::from_str(&record.scopes)?,
+            record.force_login != 0,
+        ))
     }
 }
 

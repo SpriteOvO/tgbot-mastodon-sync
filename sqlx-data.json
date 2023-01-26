@@ -10,6 +10,16 @@
     },
     "query": "\nDELETE FROM mastodon_login_user\nWHERE tg_user_id = ?1\n        "
   },
+  "243b287029122058efc5dd7ffad4d127af4d23e85aa7382b1734ee9bb94e8d10": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Right": 6
+      }
+    },
+    "query": "\nINSERT INTO mastodon_client ( domain, client_id, client_secret, redirect, scopes, force_login )\nVALUES ( ?1, ?2, ?3, ?4, ?5, ?6 )\n        "
+  },
   "4e9e4908c1bc5f68c5876dc9c3e08179da25d479d46afa2034ac6c696087078c": {
     "describe": {
       "columns": [],
@@ -65,5 +75,47 @@
       }
     },
     "query": "\nINSERT OR REPLACE INTO telegram_media_group ( group_id, msg_id, media_json )\nVALUES ( ?1, ?2, ?3 )\n        "
+  },
+  "ea8aa9783db4438ed417482e31b463b4c17d3d32d1cc9661abf817fd39db5a0d": {
+    "describe": {
+      "columns": [
+        {
+          "name": "client_id",
+          "ordinal": 0,
+          "type_info": "Text"
+        },
+        {
+          "name": "client_secret",
+          "ordinal": 1,
+          "type_info": "Text"
+        },
+        {
+          "name": "redirect",
+          "ordinal": 2,
+          "type_info": "Text"
+        },
+        {
+          "name": "scopes",
+          "ordinal": 3,
+          "type_info": "Text"
+        },
+        {
+          "name": "force_login",
+          "ordinal": 4,
+          "type_info": "Int64"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "parameters": {
+        "Right": 1
+      }
+    },
+    "query": "\nSELECT client_id, client_secret, redirect, scopes, force_login\nFROM mastodon_client\nWHERE domain = ?1\n        "
   }
 }

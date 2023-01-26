@@ -1,6 +1,5 @@
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
-use mastodon_async::registration::Registered;
 use once_cell::sync::Lazy;
 use spdlog::prelude::*;
 use teloxide::types::UserId;
@@ -14,7 +13,7 @@ use crate::{
     mastodon,
 };
 
-static AUTH_REG_CACHE: Lazy<Mutex<HashMap<UserId, Registered>>> =
+static AUTH_DOMAIN_CACHE: Lazy<Mutex<HashMap<UserId, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>, Response<'_>> {
@@ -42,47 +41,41 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
 
     info!("user '{}' trying to auth mastodon", user.id);
 
-    let mut auth_reg_cache = AUTH_REG_CACHE.lock().await;
-    let auth_reg = auth_reg_cache.get(&user.id);
-
-    match auth_reg {
+    let mut auth_domain_cache = AUTH_DOMAIN_CACHE.lock().await;
+    let auth_domain = auth_domain_cache.get(&user.id);
+    match auth_domain {
         // Treat as domain
         None => {
             let domain = arg;
-            let res = client.auth_step_1(&domain).await;
-
-            let reg = res.map_err(|err| {
-                error!("failed to create mastodon client for domain '{domain}'. err: '{err}'");
-                ReplyTo(format!("Failed to login mastodon for domain '{domain}'.\n\n{err}").into())
+            let url = client.authorization_url(&domain).await.map_err(|err| {
+                error!("failed to obtain authorization url for domain '{domain}', err: '{err}'");
+                ReplyTo(
+                    format!("Failed to obtain authorization url for domain '{domain}\n\n{err}")
+                        .into(),
+                )
             })?;
-            let url = reg.authorize_url().unwrap(); // We have made sure it has a value in `struct Client`
 
-            auth_reg_cache.insert(user.id, reg);
+            auth_domain_cache.insert(user.id, domain);
 
             Ok(ReplyTo(
                 format!("Please click this link to authorize:\n\n{url}\n\nThen send back the auth code with command /auth.").into(),
             ))
         }
         // Treat as auth code
-        Some(reg) => {
+        Some(domain) => {
             let auth_code = arg;
-
-            // FIXME: There should be a public method to get the domain, but it's not.
-            let domain = reg.clone().into_parts().0;
-
-            let res = client.auth_step_2(reg, user.id, &auth_code).await;
-            auth_reg_cache.remove(&user.id);
-
-            let _login_user = res.map_err(|err| {
+            let res = client.authorize(domain, user.id, &auth_code).await.map_err(|err| {
                 error!("failed to authorize for domain '{domain}' with auth code '{auth_code}'. err: '{err}'");
                 ReplyTo(format!("Failed to authorize for domain '{domain}' with auth code '{auth_code}'.\n\n{err}\n\nPlease send /auth <domain> to restart authorization.", ).into())
-            })?;
+            });
 
             info!(
                 "user '{}' authorized successfully. domain '{domain}'",
                 user.id
             );
 
+            auth_domain_cache.remove(&user.id);
+            res?;
             Ok(ReplyTo("Authorized successfully.".into()))
         }
     }
