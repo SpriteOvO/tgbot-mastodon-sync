@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use spdlog::prelude::*;
 use teloxide::{
@@ -56,7 +56,7 @@ pub async fn handle(req: &Request) -> Result<Response<'_>, Response<'_>> {
         ReplyTo(format!("Failed to query media.\n\n{err}").into())
     })?;
 
-    if let Some(media) = media {
+    let (text, formatted) = if let Some(media) = media {
         let files = media
             .iter()
             .map(filter_media)
@@ -102,13 +102,17 @@ pub async fn handle(req: &Request) -> Result<Response<'_>, Response<'_>> {
             attachments.push(attachment);
         }
 
-        status.media_ids(attachments.into_iter().map(|a| a.id));
-
         status
-            .status(format_text(media.caption(), media.entities()))
+            .media_ids(attachments.into_iter().map(|a| a.id))
             .sensitive(media.iter().any(|media| media.has_media_spoiler()));
+
+        format_text(media.caption(), media.entities())
     } else {
-        status.status(format_text(reply_to_msg.text(), reply_to_msg.entities()));
+        format_text(reply_to_msg.text(), reply_to_msg.entities())
+    };
+    status.status(text);
+    if formatted {
+        status.content_type("text/markdown");
     }
 
     let status = status.build().map_err(|err| {
@@ -129,25 +133,27 @@ pub async fn handle(req: &Request) -> Result<Response<'_>, Response<'_>> {
 fn format_text<'a>(
     caption: Option<&'a str>,
     entities: Option<&'a [MessageEntity]>,
-) -> Cow<'a, str> {
+) -> (String, bool) {
     let caption = caption.unwrap_or("");
     if caption.is_empty() {
-        return "".into();
+        return (String::new(), false);
     }
 
     if entities.is_none() || entities.unwrap().is_empty() {
-        return caption.into();
+        return (String::new(), false);
     }
 
     let entities = MessageEntityRef::parse(caption, entities.unwrap());
     let mut caption = caption.to_owned();
+    let mut formatted = false;
 
     entities.iter().rev().for_each(|entity| {
         if let MessageEntityKind::TextLink { url } = entity.kind() {
             caption.insert_str(entity.end(), &format!("]({url}) "));
             caption.insert_str(entity.start(), " [");
+            formatted = true;
         }
     });
 
-    caption.into()
+    (caption, formatted)
 }
