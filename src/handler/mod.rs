@@ -165,7 +165,7 @@ async fn handle_command<'a>(
             require_private(req)?;
             auth::revoke(req).await
         }
-        Command::Post => post::handle(req).await,
+        Command::Post(arg) => post::handle(req, arg).await,
     }
 }
 

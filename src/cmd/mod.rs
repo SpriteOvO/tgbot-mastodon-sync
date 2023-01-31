@@ -1,3 +1,6 @@
+mod arg;
+
+pub(crate) use arg::*;
 use teloxide::utils::command::BotCommands;
 
 #[derive(BotCommands, Clone)]
@@ -15,5 +18,5 @@ pub enum Command {
     #[command(description = "unlink your mastodon account")]
     Revoke,
     #[command(description = "post the message you replied to mastodon")]
-    Post,
+    Post(String),
 }

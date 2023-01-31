@@ -9,6 +9,7 @@ use teloxide::{
 use tokio::io;
 
 use crate::{
+    cmd::{define_cmd_args, Args},
     handler::{
         Request,
         Response::{self, *},
@@ -28,8 +29,14 @@ fn filter_media(media: &MediaKind) -> Option<&FileMeta> {
     .then_some(file)
 }
 
-pub async fn handle(req: &Request) -> Result<Response<'_>, Response<'_>> {
+pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_>, Response<'_>> {
     let (state, bot, msg) = (&req.meta.state, &req.meta.bot, &req.meta.msg);
+
+    let args = PostArgs::parse(arg.into())
+        .map_err(|err| ReplyTo(format!("Failed to parse arguments.\n\n{err}").into()))?;
+    if args.help {
+        return Ok(ReplyTo(PostArgs::help().into()));
+    }
 
     let user = msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
 
@@ -156,4 +163,25 @@ fn format_text<'a>(
     });
 
     (caption, formatted)
+}
+
+define_cmd_args! {
+
+r#"usage: /post [option]*
+
+Options:
+  help: show this help message
+"#
+
+    #[derive(PartialEq, Eq, Debug)]
+    pub struct PostArgs {
+        pub help: bool,
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for PostArgs {
+    fn default() -> Self {
+        Self { help: false }
+    }
 }
