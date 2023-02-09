@@ -1,6 +1,8 @@
 use std::{borrow::Cow, sync::Arc};
 
 use const_format::formatcp;
+use lingua::{Language, LanguageDetector, LanguageDetectorBuilder};
+use once_cell::sync::Lazy;
 use spdlog::prelude::*;
 use teloxide::{
     net::Download,
@@ -11,11 +13,12 @@ use tokio::io;
 
 use crate::{
     cmd::{define_cmd_args, Args},
+    config,
     handler::{
         Request,
         Response::{self, *},
     },
-    mastodon::{self, *},
+    mastodon::{self, Language as MLanguage, *},
     util::{
         self,
         media::{Media, MediaKind},
@@ -59,9 +62,7 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
 
     let mut status = StatusBuilder::new();
 
-    status
-        .visibility(Visibility::Public)
-        .language(Language::Eng);
+    status.visibility(Visibility::Public);
 
     let media = Media::query(state, reply_to_msg).await.map_err(|err| {
         error!("user '{}' failed to query media: {err}", user.id);
@@ -124,6 +125,12 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
     };
 
     let mut msg_text = MessageText::new(text.unwrap_or(""), entities.unwrap_or(&[]));
+
+    let lang = detect_lang(&msg_text);
+    if let Some(lang) = lang {
+        status.language(lang);
+    }
+
     append_source(&mut msg_text, args.src, reply_to_msg, msg.from());
     let (text, is_formatted) = format_text_for_mastodon(&msg_text);
 
@@ -141,6 +148,11 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
         error!("user '{}' failed to post status: {err}", user.id);
         ReplyTo(format!("Failed to post status on mastodon.\n\n{err}").into())
     })?;
+
+    info!(
+        "tg user '{}' posted a status: {posted_url} ({lang:?})",
+        login_user.tg_user_id(),
+    );
 
     Ok(ReplyTo(
         format!("Synchronized successfully.\n\n{posted_url}").into(),
@@ -283,6 +295,32 @@ fn append_source(
     }
 }
 
+fn detect_lang(msg_text: &MessageText) -> Option<MLanguage> {
+    let content = msg_text.extract_semantics();
+    if content.trim().is_empty() {
+        return None;
+    }
+
+    let lang = detect_lang_inner(content).unwrap_or_else(|| {
+        warn!("language connot be reliably detected, fallback to English");
+        Language::English
+    });
+
+    let lang_code = lang.iso_code_639_3().to_string();
+
+    Some(MLanguage::from_639_3(&lang_code).unwrap_or_else(|| {
+        error!("failed to convert ISO-639-3 '{lang_code}', fallback to English");
+        MLanguage::Eng
+    }))
+}
+
+fn detect_lang_inner(text: impl Into<String>) -> Option<Language> {
+    static DETECTOR: Lazy<LanguageDetector> =
+        Lazy::new(|| LanguageDetectorBuilder::from_languages(config::DETECT_LANGUAGES).build());
+
+    DETECTOR.detect_language_of(text)
+}
+
 define_cmd_args! {
 
 r#"Usage: reply /post [option]* to a message
@@ -357,5 +395,80 @@ abc [link](https://example.com/)"#,
                 true
             )
         );
+    }
+
+    #[test]
+    fn language_detection() {
+        use MessageEntityKind::*;
+
+        {
+            let mut msg_text = MessageText::new("", vec![]);
+            msg_text.append_text("喵呜 ");
+            msg_text.append_text_with_entity("#English ", Hashtag);
+            msg_text.append_text_with_entity("#Tags ", Hashtag);
+            msg_text.append_text_with_entity("#Hello ", Hashtag);
+            msg_text.append_text_with_entity("#World ", Hashtag);
+            msg_text.append_text_with_entity("#Example", Hashtag);
+
+            // without `.extract_semantics()`, false positive
+            assert_eq!(detect_lang_inner(msg_text.text()), Some(Language::English));
+
+            // with `.extract_semantics()`
+            let result = detect_lang(&msg_text).unwrap();
+            assert_eq!(result, MLanguage::Zho);
+            assert_eq!(result.to_string(), "Chinese");
+        }
+        {
+            let mut msg_text = MessageText::new("", vec![]);
+            msg_text.append_text("  \t  \n ");
+            msg_text.append_text_with_entity("#English ", Hashtag);
+            msg_text.append_text_with_entity("#Tags ", Hashtag);
+            msg_text.append_text_with_entity("#Hello ", Hashtag);
+            msg_text.append_text_with_entity("#World ", Hashtag);
+            msg_text.append_text_with_entity("#Example", Hashtag);
+            msg_text.append_text("  \t  \n \n\n");
+
+            assert!(detect_lang(&msg_text).is_none());
+        }
+        {
+            let mut msg_text = MessageText::new("", vec![]);
+            msg_text.append_text("喵呜w");
+
+            let result = detect_lang(&msg_text).unwrap();
+            assert_eq!(result, MLanguage::Zho);
+            assert_eq!(result.to_string(), "Chinese");
+        }
+        {
+            let mut msg_text = MessageText::new("", vec![]);
+            msg_text.append_text("Meow~");
+
+            let result = detect_lang(&msg_text).unwrap();
+            assert_eq!(result, MLanguage::Eng);
+            assert_eq!(result.to_string(), "English");
+        }
+        {
+            let mut msg_text = MessageText::new("", vec![]);
+            msg_text.append_text("这是一个 test");
+
+            let result = detect_lang(&msg_text).unwrap();
+            assert_eq!(result, MLanguage::Zho);
+            assert_eq!(result.to_string(), "Chinese");
+        }
+        {
+            let mut msg_text = MessageText::new("", vec![]);
+            msg_text.append_text("The word test in Chinese is 测试");
+
+            let result = detect_lang(&msg_text).unwrap();
+            assert_eq!(result, MLanguage::Eng);
+            assert_eq!(result.to_string(), "English");
+        }
+        {
+            let mut msg_text = MessageText::new("", vec![]);
+            msg_text.append_text("こんにちは 😊");
+
+            let result = detect_lang(&msg_text).unwrap();
+            assert_eq!(result, MLanguage::Jpn);
+            assert_eq!(result.to_string(), "Japanese");
+        }
     }
 }

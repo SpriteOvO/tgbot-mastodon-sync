@@ -214,6 +214,10 @@ impl LoginUser {
         &self.inst.data.base
     }
 
+    pub fn tg_user_id(&self) -> UserId {
+        self.tg_user_id
+    }
+
     pub async fn attach_media(
         &self,
         mut data: impl AsyncRead + Unpin,
@@ -245,8 +249,6 @@ impl LoginUser {
         }?;
 
         let url = posted.url.unwrap_or_else(|| "*invisible*".to_string());
-
-        info!("tg user '{}' status posted: {url}", self.tg_user_id);
         Ok(url)
     }
 }
