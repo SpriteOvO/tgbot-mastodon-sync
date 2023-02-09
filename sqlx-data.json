@@ -30,6 +30,24 @@
     },
     "query": "\nINSERT OR REPLACE INTO mastodon_login_user ( tg_user_id, mastodon_async_data )\nVALUES ( ?1, ?2 )\n        "
   },
+  "6e1c34dcefd45de463743041d12eaf56340fa8aa6afc01e5279312af3946805f": {
+    "describe": {
+      "columns": [
+        {
+          "name": "tg_user_id",
+          "ordinal": 0,
+          "type_info": "Int64"
+        }
+      ],
+      "nullable": [
+        false
+      ],
+      "parameters": {
+        "Right": 0
+      }
+    },
+    "query": "\nSELECT tg_user_id\nFROM mastodon_login_user\n        "
+  },
   "b34e77710302775faff2d7fd94e14e9abed360df4690cfcb8cadfa88dd5dc35d": {
     "describe": {
       "columns": [

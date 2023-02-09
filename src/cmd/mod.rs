@@ -21,4 +21,6 @@ pub enum Command {
         description = "post the message you replied to mastodon (send with `help` for advanced usages)"
     )]
     Post(String),
+    #[command(description = "off")]
+    Broadcast(String),
 }

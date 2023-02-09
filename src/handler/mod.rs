@@ -1,11 +1,12 @@
 mod auth;
+mod broadcast;
 #[cfg(debug_assertions)]
 mod debug;
 mod ping;
 mod post;
 mod start;
 
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, env, sync::Arc};
 
 use spdlog::prelude::*;
 use teloxide::{
@@ -15,6 +16,7 @@ use teloxide::{
 
 use crate::{
     cmd::Command,
+    config,
     util::{media, ProgMsg},
     InstanceState,
 };
@@ -205,8 +207,12 @@ async fn handle_command<'a>(
         }
         Command::Post(arg) => {
             let mut prog_msg = ProgMsg::new(&req.meta.bot, &req.meta.msg, "Synchronizing...");
-            let result = post::handle(req, &mut prog_msg, arg).await;
-            result
+            post::handle(req, &mut prog_msg, arg).await
+        }
+        Command::Broadcast(arg) => {
+            require_admin(req)?;
+            let mut prog_msg = ProgMsg::new(&req.meta.bot, &req.meta.msg, "Broadcasting...");
+            broadcast::handle(req, &mut prog_msg, arg).await
         }
     }
 }
@@ -217,5 +223,21 @@ fn require_private(req: &Request) -> Result<(), Response<'_>> {
         ChatKind::Public(_) => Err(Response::reply_to(
             "This command is only available in direct messages.",
         )),
+    }
+}
+
+fn require_admin(req: &Request) -> Result<(), Response<'_>> {
+    let admin_tg_user_id = env::var(config::ADMIN_TG_USER_ID_ENV_VAR)
+        .ok()
+        .and_then(|e| e.parse::<u64>().ok());
+
+    let Some(admin_tg_user_id) = admin_tg_user_id else {
+        return Err(Response::reply_to(format!("Admin user id is not set or invalid.\nPlease set env var `{}` on your server.", config::ADMIN_TG_USER_ID_ENV_VAR)))
+    };
+
+    if req.meta.msg.from().map(|u| u.id.0) != Some(admin_tg_user_id) {
+        Err(Response::reply_to("🎶 Never Gonna Give You Up 🎶"))
+    } else {
+        Ok(())
     }
 }
