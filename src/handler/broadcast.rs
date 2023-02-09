@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use teloxide::requests::Requester;
+use teloxide::{prelude::*, requests::Requester};
 
 use crate::{
     handler::{Request, Response, UserId},
@@ -30,7 +30,13 @@ FROM mastodon_login_user
     for record in records {
         let user_id = UserId(record.tg_user_id as u64);
 
-        let status: Cow<'a, str> = match req.meta.bot.send_message(user_id, &content).await {
+        let status: Cow<'a, str> = match req
+            .meta
+            .bot
+            .send_message(user_id, &content)
+            .disable_web_page_preview(true)
+            .await
+        {
             Ok(_) => "succeeded".into(),
             Err(err) => format!("failed ({err})").into(),
         };
