@@ -3,10 +3,7 @@ use std::{str::FromStr, sync::Arc};
 use anyhow::{anyhow, bail};
 use const_format::formatcp;
 use mastodon_async::{
-    entities::{attachment::Attachment, status::Status},
-    prelude::*,
-    registration::Registered,
-    scopes, Error as MError,
+    entities::attachment::ProcessedAttachment, prelude::*, registration::Registered, scopes,
 };
 pub use mastodon_async::{Language, StatusBuilder, Visibility};
 use serde_json as json;
@@ -15,7 +12,7 @@ use teloxide::types::UserId;
 use tokio::{
     fs::File,
     io::AsyncRead,
-    time::{self, Duration},
+    time::{self},
 };
 
 use crate::{config, InstanceState};
@@ -222,7 +219,7 @@ impl LoginUser {
         &self,
         mut data: impl AsyncRead + Unpin,
         description: Option<String>,
-    ) -> anyhow::Result<Attachment> {
+    ) -> anyhow::Result<ProcessedAttachment> {
         // TODO: Do not write out files when https://github.com/dscottboggs/mastodon-async/issues/60 is implemented
 
         let temp_file = tempfile::Builder::new()
@@ -237,46 +234,23 @@ impl LoginUser {
 
         trace!("download done, uploading it");
         let attachment = self.inst.media(temp_file, description).await?;
+        let attachment = tokio::select! {
+            r = self.inst.wait_for_processing(attachment, config::WAITING_FOR_SERVER_PROCESS_MEDIA_INTERVAL.into()) => r,
+            _ = time::sleep(config::WAITING_FOR_SERVER_PROCESS_MEDIA_TIMEOUT) => bail!("timeout waiting for server processing media")
+        }?;
 
         trace!("upload done");
         Ok(attachment)
     }
 
     pub async fn post_status(&self, status: NewStatus) -> anyhow::Result<String> {
-        let posted = tokio::select! {
-            r = self.post_status_retry(status, config::WAITING_FOR_SERVER_PROCESS_MEDIA_INTERVAL) => r,
-            _ = time::sleep(config::WAITING_FOR_SERVER_PROCESS_MEDIA_TIMEOUT) => bail!("timeout waiting for server processing media")
-        }?;
-
+        let posted = self.inst.new_status(status.clone()).await?;
         let url = posted.url.unwrap_or_else(|| "*invisible*".to_string());
         Ok(url)
     }
 }
 
 impl LoginUser {
-    // TODO: Hacky for https://github.com/dscottboggs/mastodon-async/issues/61
-    pub async fn post_status_retry(
-        &self,
-        status: NewStatus,
-        interval: Duration,
-    ) -> anyhow::Result<Status> {
-        loop {
-            match self.inst.new_status(status.clone()).await {
-                Ok(posted) => return Ok(posted),
-                Err(MError::Api { status, response }) => {
-                    let err_text = "Cannot attach files that have not finished processing. Try again in a moment!";
-                    if status.as_u16() == 422 && response.error == err_text {
-                        time::sleep(interval).await;
-                        continue;
-                    } else {
-                        return Err(MError::Api { status, response }.into());
-                    }
-                }
-                Err(err) => return Err(err.into()),
-            }
-        }
-    }
-
     fn serialize(&self) -> String {
         json::to_string(&self.inst.data).unwrap()
     }
