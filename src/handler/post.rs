@@ -1,10 +1,11 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
+use const_format::formatcp;
 use spdlog::prelude::*;
 use teloxide::{
     net::Download,
     requests::Requester,
-    types::{FileMeta, MediaKind::*, MessageEntity, MessageEntityKind, MessageEntityRef},
+    types::{FileMeta, ForwardedFrom, MediaKind::*, Message, MessageEntityKind, User},
 };
 use tokio::io;
 
@@ -15,7 +16,11 @@ use crate::{
         Response::{self, *},
     },
     mastodon::{self, *},
-    util::media::{Media, MediaKind},
+    util::{
+        self,
+        media::{Media, MediaKind},
+        text::MessageText,
+    },
 };
 
 fn filter_media(media: &MediaKind) -> Option<&FileMeta> {
@@ -40,9 +45,9 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
 
     let user = msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
 
-    let reply_to_msg = msg.reply_to_message().ok_or_else(|| {
-        ReplyTo("You should reply to a message to be synchronized to mastodon.".into())
-    })?;
+    let Some(reply_to_msg) = msg.reply_to_message() else {
+        return Ok(ReplyTo(PostArgs::help().into()));
+    };
 
     let client = mastodon::Client::new(Arc::clone(state));
     let login_user = client.login(user.id).await.map_err(|err| {
@@ -63,7 +68,7 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
         ReplyTo(format!("Failed to query media.\n\n{err}").into())
     })?;
 
-    let (text, formatted) = if let Some(media) = media {
+    let (text, entities) = if let Some(media) = media.as_ref() {
         let files = media
             .iter()
             .map(filter_media)
@@ -113,12 +118,17 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
             .media_ids(attachments.into_iter().map(|a| a.id))
             .sensitive(media.iter().any(|media| media.has_media_spoiler()));
 
-        format_text(media.caption(), media.entities())
+        (media.caption(), media.entities())
     } else {
-        format_text(reply_to_msg.text(), reply_to_msg.entities())
+        (reply_to_msg.text(), reply_to_msg.entities())
     };
+
+    let mut msg_text = MessageText::new(text.unwrap_or(""), entities.unwrap_or(&[]));
+    append_source(&mut msg_text, args.src, reply_to_msg, msg.from());
+    let (text, is_formatted) = format_text_for_mastodon(&msg_text);
+
     status.status(text);
-    if formatted {
+    if is_formatted {
         status.content_type("text/markdown");
     }
 
@@ -137,51 +147,215 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
     ))
 }
 
-fn format_text<'a>(
-    caption: Option<&'a str>,
-    entities: Option<&'a [MessageEntity]>,
-) -> (String, bool) {
-    let caption = caption.unwrap_or("");
-    if caption.is_empty() {
-        return (String::new(), false);
+fn format_text_for_mastodon<'a>(msg_text: &'a MessageText) -> (Cow<'a, str>, bool) {
+    if msg_text.entities().is_empty() {
+        return (msg_text.text().into(), false);
     }
 
-    if entities.is_none() || entities.unwrap().is_empty() {
-        return (String::new(), false);
-    }
-
-    let entities = MessageEntityRef::parse(caption, entities.unwrap());
-    let mut caption = caption.to_owned();
-    let mut formatted = false;
+    let entities = msg_text.parse_entities();
+    let mut text = msg_text.text().to_owned();
+    let mut is_formatted = false;
 
     entities.iter().rev().for_each(|entity| {
         if let MessageEntityKind::TextLink { url } = entity.kind() {
-            caption.insert_str(entity.end(), &format!("]({url}) "));
-            caption.insert_str(entity.start(), " [");
-            formatted = true;
+            let (start, end) = (entity.start(), entity.end());
+
+            let mut end_iter = text[end..].chars();
+            if end_iter.next() != Some(' ') && end_iter.next().is_some() {
+                text.insert(end, ' ');
+            }
+
+            text.insert_str(end, &format!("]({url})"));
+
+            let mut start_iter = text[..start].chars().rev();
+            let last_char = start_iter.next();
+            if last_char.is_some() && last_char != Some(' ') {
+                text.insert_str(start, " [");
+            } else {
+                text.insert(start, '[');
+            }
+            is_formatted = true;
         }
     });
 
-    (caption, formatted)
+    (text.into(), is_formatted)
+}
+
+fn append_source(
+    msg_text: &mut MessageText,
+    enable: Option<bool>,
+    msg: &Message,
+    trigger: Option<&User>,
+) {
+    const SRC_PREFIX: &str = "\n\n-----\nForward from Telegram";
+    const SRC_PREFIX_USER: &str = formatcp!("{SRC_PREFIX} user");
+
+    fn forward_source(msg_text: &mut MessageText, msg: &Message) -> bool {
+        let Some(forward) = msg.forward() else {
+            return false
+        };
+
+        match &forward.from {
+            ForwardedFrom::User(user) => {
+                msg_text.append_text(format!("{SRC_PREFIX_USER} \"{}\"", user.full_name()));
+                if let Some(username) = &user.username {
+                    msg_text.append_text(format!(" (@{username})"));
+                }
+            }
+            ForwardedFrom::Chat(chat) => {
+                msg_text.append_text(format!(
+                    "{SRC_PREFIX} \"{}\"",
+                    util::text::chat_display_name(chat)
+                ));
+                if let Some(username) = &chat.username() {
+                    msg_text.append_text(format!(" (@{username})"));
+                }
+            }
+            ForwardedFrom::SenderName(name) => {
+                msg_text.append_text(format!("{SRC_PREFIX_USER} \"{name}\""));
+            }
+        }
+
+        true
+    }
+
+    fn sender_source(trigger: Option<&User>, msg_text: &mut MessageText, msg: &Message) -> bool {
+        let sender = msg.sender_chat();
+        let from = msg.from().filter(|user| {
+            (trigger.is_none() || trigger.filter(|t| user.id != t.id).is_some()) // alternative: `.is_some_and()`, still unstable
+                && !user.is_anonymous()
+                && !user.is_channel()
+        });
+
+        if sender.is_none() && from.is_none() {
+            return false;
+        }
+
+        match (sender, from) {
+            (None, None) => unreachable!(),
+            (Some(chat), _) => {
+                msg_text.append_text(format!(
+                    "{SRC_PREFIX_USER} \"{}\"",
+                    util::text::chat_display_name(chat)
+                ));
+                if let Some(username) = &chat.username() {
+                    msg_text.append_text(format!(" (@{username})"));
+                }
+            }
+            (None, Some(user)) => {
+                msg_text.append_text(format!("{SRC_PREFIX_USER} \"{}\"", user.full_name()));
+                if let Some(username) = &user.username {
+                    msg_text.append_text(format!(" (@{username})"));
+                }
+            }
+        }
+
+        true
+    }
+
+    match enable {
+        None => {
+            // auto
+            //
+            // if-then `forward.source`
+            // else-if `sender != self` then `sender`
+            // else-then `ignore`
+
+            if !forward_source(msg_text, msg) {
+                _ = sender_source(trigger, msg_text, msg);
+            }
+        }
+        Some(true) => {
+            // force enable
+            //
+            // if-then `forward.source`
+            // else-then `sender`
+
+            if !forward_source(msg_text, msg) {
+                _ = sender_source(None, msg_text, msg);
+            }
+        }
+        Some(false) => {
+            // force disable
+            //
+            // `ignore`
+        }
+    }
 }
 
 define_cmd_args! {
 
-r#"usage: /post [option]*
+r#"Usage: reply /post [option]* to a message
 
 Options:
-  help: show this help message
+  help   : show this help message
+  +/-src : force enable / disable appending message source (default: auto)
+           e.g. +src : sync with message source, including your own message
+                -src : sync without any source
+                *not-specified* (auto) : sync with message source, excluding your own message
 "#
 
     #[derive(PartialEq, Eq, Debug)]
     pub struct PostArgs {
         pub help: bool,
+        pub src: Option<bool>,
     }
 }
 
 #[allow(clippy::derivable_impls)]
 impl Default for PostArgs {
     fn default() -> Self {
-        Self { help: false }
+        Self {
+            help: false,
+            src: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Borrow;
+
+    use super::*;
+
+    #[test]
+    fn test_format_text_for_mastodon() {
+        let mut msg_text = MessageText::new("", vec![]);
+
+        msg_text.append_text_link("link", "https://example.com".try_into().unwrap());
+        msg_text.append_text("def\n");
+
+        msg_text.append_text("abc");
+        msg_text.append_text_link("link", "https://example.com".try_into().unwrap());
+        msg_text.append_text("def\n");
+
+        msg_text.append_text("abc ");
+        msg_text.append_text_link("link", "https://example.com".try_into().unwrap());
+        msg_text.append_text("def\n");
+
+        msg_text.append_text("abc ");
+        msg_text.append_text_link("link", "https://example.com".try_into().unwrap());
+        msg_text.append_text(" def\n");
+
+        msg_text.append_text("abc");
+        msg_text.append_text_link("link", "https://example.com".try_into().unwrap());
+        msg_text.append_text(" def\n");
+
+        msg_text.append_text("abc");
+        msg_text.append_text_link("link", "https://example.com".try_into().unwrap());
+
+        let (formatted, is_formatted) = format_text_for_mastodon(&msg_text);
+        assert_eq!(
+            (formatted.borrow(), is_formatted),
+            (
+                r#"[link](https://example.com/) def
+abc [link](https://example.com/) def
+abc [link](https://example.com/) def
+abc [link](https://example.com/) def
+abc [link](https://example.com/) def
+abc [link](https://example.com/)"#,
+                true
+            )
+        );
     }
 }

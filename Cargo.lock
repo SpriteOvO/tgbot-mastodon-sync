@@ -2088,6 +2088,7 @@ dependencies = [
  "dptree",
  "mastodon-async",
  "once_cell",
+ "reqwest",
  "serde",
  "serde_json",
  "spdlog-rs",

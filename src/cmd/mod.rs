@@ -17,6 +17,8 @@ pub enum Command {
     Auth(String),
     #[command(description = "unlink your mastodon account")]
     Revoke,
-    #[command(description = "post the message you replied to mastodon")]
+    #[command(
+        description = "post the message you replied to mastodon (send with `help` for advanced usages)"
+    )]
     Post(String),
 }
