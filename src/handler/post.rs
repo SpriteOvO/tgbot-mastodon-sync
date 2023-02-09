@@ -14,15 +14,13 @@ use tokio::io;
 use crate::{
     cmd::{define_cmd_args, Args},
     config,
-    handler::{
-        Request,
-        Response::{self, *},
-    },
+    handler::{Request, Response},
     mastodon::{self, Language as MLanguage, *},
     util::{
         self,
         media::{Media, MediaKind},
         text::MessageText,
+        ProgMsg,
     },
 };
 
@@ -37,25 +35,29 @@ fn filter_media(media: &MediaKind) -> Option<&FileMeta> {
     .then_some(file)
 }
 
-pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_>, Response<'_>> {
+pub async fn handle<'a>(
+    req: &Request,
+    prog_msg: &mut ProgMsg<'a>,
+    arg: impl Into<String>,
+) -> Result<Response<'a>, Response<'a>> {
     let (state, bot, msg) = (&req.meta.state, &req.meta.bot, &req.meta.msg);
 
     let args = PostArgs::parse(arg.into())
-        .map_err(|err| ReplyTo(format!("Failed to parse arguments.\n\n{err}").into()))?;
+        .map_err(|err| Response::reply_to(format!("Failed to parse arguments.\n\n{err}")))?;
     if args.help {
-        return Ok(ReplyTo(PostArgs::help().into()));
+        return Ok(Response::reply_to(PostArgs::help()));
     }
 
-    let user = msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
+    let user = msg.from().ok_or_else(|| Response::reply_to("No user."))?;
 
     let Some(reply_to_msg) = msg.reply_to_message() else {
-        return Ok(ReplyTo(PostArgs::help().into()));
+        return Ok(Response::reply_to(PostArgs::help()));
     };
 
     let client = mastodon::Client::new(Arc::clone(state));
     let login_user = client.login(user.id).await.map_err(|err| {
         warn!("user '{}' login mastodon failed: {err}", user.id);
-        ReplyTo("Please use /auth to link your mastodon account first.".into())
+        Response::reply_to("Please use /auth to link your mastodon account first.")
     })?;
 
     info!("user '{}' trying to post on mastodon", user.id);
@@ -66,7 +68,7 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
 
     let media = Media::query(state, reply_to_msg).await.map_err(|err| {
         error!("user '{}' failed to query media: {err}", user.id);
-        ReplyTo(format!("Failed to query media.\n\n{err}").into())
+        Response::reply_to(format!("Failed to query media.\n\n{err}"))
     })?;
 
     let (text, entities) = if let Some(media) = media.as_ref() {
@@ -76,17 +78,24 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| {
                 error!("user '{}' trying to sync an unsupported media", user.id);
-                ReplyTo("Contains unsupported media.".into())
+                Response::reply_to("Contains unsupported media.")
             })?;
 
         let mut attachments = Vec::with_capacity(files.len());
 
         info!("downloading media for user '{}'", user.id);
 
-        for file in files {
+        for (i, file) in files.iter().enumerate() {
+            prog_msg
+                .update(
+                    format!("Processing media... ({}/{})", i + 1, files.len()),
+                    false,
+                )
+                .await;
+
             let file = bot.get_file(&file.id).await.map_err(|err| {
                 error!("user '{}' failed to get file meta: {err}", user.id);
-                ReplyTo(format!("Failed to get file meta.\n\n{err}").into())
+                Response::reply_to(format!("Failed to get file meta.\n\n{err}"))
             })?;
 
             let (reader, writer) = io::duplex(1);
@@ -99,17 +108,17 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
 
                     bot.download_file(&file.path, &mut reader).await
                 },
-                login_user.attach_media(writer, None)
+                async { login_user.attach_media(writer, None).await }
             );
 
             download.map_err(|err| {
                 error!("user '{}' failed to download file: {err}", user.id);
-                ReplyTo(format!("Failed to download file.\n\n{err}").into())
+                Response::reply_to(format!("Failed to download file.\n\n{err}"))
             })?;
 
             let attachment = attach.map_err(|err| {
                 error!("user '{}' failed to attach media: {err}", user.id);
-                ReplyTo(format!("Failed to attach media.\n\n{err}").into())
+                Response::reply_to(format!("Failed to attach media.\n\n{err}"))
             })?;
 
             attachments.push(attachment);
@@ -126,12 +135,13 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
 
     let mut msg_text = MessageText::new(text.unwrap_or(""), entities.unwrap_or(&[]));
 
+    prog_msg.update("Detecting content language...", true).await;
     let lang = detect_lang(&msg_text);
     if let Some(lang) = lang {
         status.language(lang);
     }
 
-    append_source(&mut msg_text, args.src, reply_to_msg, msg.from());
+    let with_src = append_source(&mut msg_text, args.src, reply_to_msg, msg.from());
     let (text, is_formatted) = format_text_for_mastodon(&msg_text);
 
     status.status(text);
@@ -141,12 +151,14 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
 
     let status = status.build().map_err(|err| {
         error!("user '{}' failed to build status: {err}", user.id);
-        ReplyTo(format!("Failed to build status.\n\n{err}").into())
+        Response::reply_to(format!("Failed to build status.\n\n{err}"))
     })?;
+
+    prog_msg.update("Posting status...", true).await;
 
     let posted_url = login_user.post_status(status).await.map_err(|err| {
         error!("user '{}' failed to post status: {err}", user.id);
-        ReplyTo(format!("Failed to post status on mastodon.\n\n{err}").into())
+        Response::reply_to(format!("Failed to post status on mastodon.\n\n{err}"))
     })?;
 
     info!(
@@ -154,9 +166,17 @@ pub async fn handle(req: &Request, arg: impl Into<String>) -> Result<Response<'_
         login_user.tg_user_id(),
     );
 
-    Ok(ReplyTo(
-        format!("Synchronized successfully.\n\n{posted_url}").into(),
+    let mut info = String::new();
+    if let Some(lang) = lang {
+        info.push_str(lang.to_639_1().unwrap_or("??"));
+        info.push_str(", ")
+    }
+    info.push_str(if with_src { "w/ src" } else { "w/o src" });
+
+    Ok(Response::reply_to(format!(
+        "Synchronized successfully. \n\n({info})\n{posted_url}",
     ))
+    .disable_preview())
 }
 
 fn format_text_for_mastodon<'a>(msg_text: &'a MessageText) -> (Cow<'a, str>, bool) {
@@ -198,7 +218,7 @@ fn append_source(
     enable: Option<bool>,
     msg: &Message,
     trigger: Option<&User>,
-) {
+) -> bool {
     const SRC_PREFIX: &str = "\n\n-----\nForward from Telegram";
     const SRC_PREFIX_USER: &str = formatcp!("{SRC_PREFIX} user");
 
@@ -273,9 +293,7 @@ fn append_source(
             // else-if `sender != self` then `sender`
             // else-then `ignore`
 
-            if !forward_source(msg_text, msg) {
-                _ = sender_source(trigger, msg_text, msg);
-            }
+            forward_source(msg_text, msg) || sender_source(trigger, msg_text, msg)
         }
         Some(true) => {
             // force enable
@@ -283,14 +301,14 @@ fn append_source(
             // if-then `forward.source`
             // else-then `sender`
 
-            if !forward_source(msg_text, msg) {
-                _ = sender_source(None, msg_text, msg);
-            }
+            forward_source(msg_text, msg) || sender_source(None, msg_text, msg)
         }
         Some(false) => {
             // force disable
             //
             // `ignore`
+
+            false
         }
     }
 }

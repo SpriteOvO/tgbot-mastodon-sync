@@ -6,10 +6,7 @@ use teloxide::types::UserId;
 use tokio::sync::Mutex;
 
 use crate::{
-    handler::{
-        Request,
-        Response::{self, *},
-    },
+    handler::{Request, Response},
     mastodon,
 };
 
@@ -19,7 +16,7 @@ static AUTH_DOMAIN_CACHE: Lazy<Mutex<HashMap<UserId, String>>> =
 pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>, Response<'_>> {
     let (state, msg) = (&req.meta.state, &req.meta.msg);
 
-    let user = msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
+    let user = msg.from().ok_or_else(|| Response::reply_to("No user."))?;
 
     let client = mastodon::Client::new(Arc::clone(state));
 
@@ -34,9 +31,9 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
             .into(),
         };
 
-        return Err(ReplyTo(
-            format!("{response}\n\nformat: /auth <domain or auth-code>").into(),
-        ));
+        return Err(Response::reply_to(format!(
+            "{response}\n\nformat: /auth <domain or auth-code>"
+        )));
     }
 
     info!("user '{}' trying to auth mastodon", user.id);
@@ -49,16 +46,15 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
             let domain = arg;
             let url = client.authorization_url(&domain).await.map_err(|err| {
                 error!("failed to obtain authorization url for domain '{domain}', err: '{err}'");
-                ReplyTo(
-                    format!("Failed to obtain authorization url for domain '{domain}\n\n{err}")
-                        .into(),
-                )
+                Response::reply_to(format!(
+                    "Failed to obtain authorization url for domain '{domain}\n\n{err}"
+                ))
             })?;
 
             auth_domain_cache.insert(user.id, domain);
 
-            Ok(ReplyTo(
-                format!("Please click this link to authorize:\n\n{url}\n\nThen send back the auth code with command /auth.").into(),
+            Ok(Response::reply_to(
+                format!("Please click this link to authorize:\n\n{url}\n\nThen send back the auth code with command /auth."),
             ))
         }
         // Treat as auth code
@@ -66,7 +62,7 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
             let auth_code = arg;
             let res = client.authorize(domain, user.id, &auth_code).await.map_err(|err| {
                 error!("failed to authorize for domain '{domain}' with auth code '{auth_code}'. err: '{err}'");
-                ReplyTo(format!("Failed to authorize for domain '{domain}' with auth code '{auth_code}'.\n\n{err}\n\nPlease send /auth <domain> to restart authorization.", ).into())
+                Response::reply_to(format!("Failed to authorize for domain '{domain}' with auth code '{auth_code}'.\n\n{err}\n\nPlease send /auth <domain> to restart authorization.", ))
             });
 
             info!(
@@ -76,7 +72,7 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
 
             auth_domain_cache.remove(&user.id);
             res?;
-            Ok(ReplyTo("Authorized successfully.".into()))
+            Ok(Response::reply_to("Authorized successfully."))
         }
     }
 }
@@ -84,14 +80,13 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
 pub async fn revoke(req: &Request) -> Result<Response<'_>, Response<'_>> {
     let (state, msg) = (&req.meta.state, &req.meta.msg);
 
-    let user = msg.from().ok_or_else(|| ReplyTo("No user.".into()))?;
+    let user = msg.from().ok_or_else(|| Response::reply_to("No user."))?;
 
     let client = mastodon::Client::new(Arc::clone(state));
 
     match client.login(user.id).await {
-        Err(_) => Err(ReplyTo(
-            "You have not linked your mastodon account yet.\n\nUsing /auth command to link one."
-                .into(),
+        Err(_) => Err(Response::reply_to(
+            "You have not linked your mastodon account yet.\n\nUsing /auth command to link one.",
         )),
         Ok(login_user) => {
             info!("user '{}' trying to revoke mastodon auth", user.id);
@@ -100,10 +95,9 @@ pub async fn revoke(req: &Request) -> Result<Response<'_>, Response<'_>> {
 
             client.revoke(&login_user).await.map_err(|err| {
                 error!("failed to revoke mastodon auth for domain '{domain}'. err: '{err}'");
-                ReplyTo(
-                    format!("Failed to revoke mastodon auth for domain '{domain}'.\n\n{err}")
-                        .into(),
-                )
+                Response::reply_to(format!(
+                    "Failed to revoke mastodon auth for domain '{domain}'.\n\n{err}"
+                ))
             })?;
 
             info!(
@@ -111,7 +105,7 @@ pub async fn revoke(req: &Request) -> Result<Response<'_>, Response<'_>> {
                 user.id
             );
 
-            Ok(ReplyTo("Revoked successfully.".into()))
+            Ok(Response::reply_to("Revoked successfully."))
         }
     }
 }

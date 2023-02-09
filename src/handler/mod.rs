@@ -13,7 +13,11 @@ use teloxide::{
     types::{ChatKind, Me},
 };
 
-use crate::{cmd::Command, util::media, InstanceState};
+use crate::{
+    cmd::Command,
+    util::{media, ProgMsg},
+    InstanceState,
+};
 
 struct RequestMeta {
     state: Arc<InstanceState>,
@@ -77,13 +81,44 @@ impl Request {
     }
 }
 
-pub enum Response<'a> {
+pub enum ResponseKind<'a> {
     Nothing,
     ReplyTo(Cow<'a, str>),
     NewMsg(Cow<'a, str>),
 }
 
-use Response::*;
+pub struct Response<'a> {
+    kind: ResponseKind<'a>,
+    disable_preview: bool,
+}
+
+impl<'a> Response<'a> {
+    pub fn nothing() -> Self {
+        Self {
+            kind: ResponseKind::Nothing,
+            disable_preview: false,
+        }
+    }
+
+    pub fn reply_to(text: impl Into<Cow<'a, str>>) -> Self {
+        Self {
+            kind: ResponseKind::ReplyTo(text.into()),
+            disable_preview: false,
+        }
+    }
+
+    pub fn new_msg(text: impl Into<Cow<'a, str>>) -> Self {
+        Self {
+            kind: ResponseKind::NewMsg(text.into()),
+            disable_preview: false,
+        }
+    }
+
+    pub fn disable_preview(mut self) -> Self {
+        self.disable_preview = true;
+        self
+    }
+}
 
 pub async fn handle(req: Request) -> Result<(), teloxide::RequestError> {
     let req = &req;
@@ -92,7 +127,7 @@ pub async fn handle(req: Request) -> Result<(), teloxide::RequestError> {
     let res = handle_kind(req).await;
     let (succeeded, Ok(resp) | Err(resp)) = (res.is_ok(), res);
 
-    let reply = |text, reply_to_msg_id| async move {
+    let reply = |text, reply_to_msg_id, disable_preview: bool| async move {
         let mut req = if succeeded {
             req.meta.bot.send_message(chat_id, text)
         } else {
@@ -101,13 +136,16 @@ pub async fn handle(req: Request) -> Result<(), teloxide::RequestError> {
         if let Some(reply_to_msg_id) = reply_to_msg_id {
             req = req.reply_to_message_id(reply_to_msg_id);
         }
+        if disable_preview {
+            req = req.disable_web_page_preview(disable_preview);
+        }
         req.await
     };
 
-    match resp {
-        Nothing => return Ok(()),
-        ReplyTo(text) => reply(text, Some(req.meta.msg.id)),
-        NewMsg(text) => reply(text, None),
+    match resp.kind {
+        ResponseKind::Nothing => return Ok(()),
+        ResponseKind::ReplyTo(text) => reply(text, Some(req.meta.msg.id), resp.disable_preview),
+        ResponseKind::NewMsg(text) => reply(text, None, resp.disable_preview),
     }
     .await?;
 
@@ -132,7 +170,7 @@ async fn handle_new_message(req: &Request) -> Result<Response<'_>, Response<'_>>
     );
 
     media::on_new_or_edited_message(state, msg).await;
-    Ok(Nothing)
+    Ok(Response::nothing())
 }
 
 async fn handle_edited_message(req: &Request) -> Result<Response<'_>, Response<'_>> {
@@ -145,7 +183,7 @@ async fn handle_edited_message(req: &Request) -> Result<Response<'_>, Response<'
     );
 
     media::on_new_or_edited_message(state, msg).await;
-    Ok(Nothing)
+    Ok(Response::nothing())
 }
 
 async fn handle_command<'a>(
@@ -165,15 +203,19 @@ async fn handle_command<'a>(
             require_private(req)?;
             auth::revoke(req).await
         }
-        Command::Post(arg) => post::handle(req, arg).await,
+        Command::Post(arg) => {
+            let mut prog_msg = ProgMsg::new(&req.meta.bot, &req.meta.msg, "Synchronizing...");
+            let result = post::handle(req, &mut prog_msg, arg).await;
+            result
+        }
     }
 }
 
 fn require_private(req: &Request) -> Result<(), Response<'_>> {
     match req.meta.msg.chat.kind {
         ChatKind::Private(_) => Ok(()),
-        ChatKind::Public(_) => Err(ReplyTo(
-            "This command is only available in direct messages.".into(),
+        ChatKind::Public(_) => Err(Response::reply_to(
+            "This command is only available in direct messages.",
         )),
     }
 }
