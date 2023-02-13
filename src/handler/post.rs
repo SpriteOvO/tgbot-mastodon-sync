@@ -1,11 +1,11 @@
 use std::{borrow::Cow, sync::Arc};
 
-use const_format::formatcp;
 use lingua::{Language, LanguageDetector, LanguageDetectorBuilder};
 use once_cell::sync::Lazy;
 use spdlog::prelude::*;
 use teloxide::{
     net::Download,
+    prelude::*,
     requests::Requester,
     types::{FileMeta, ForwardedFrom, MediaKind::*, Message, MessageEntityKind, User},
 };
@@ -141,7 +141,7 @@ pub async fn handle<'a>(
         status.language(lang);
     }
 
-    let with_src = append_source(&mut msg_text, args.src, reply_to_msg, msg.from());
+    let with_src = append_source(bot, &mut msg_text, args.src, reply_to_msg, msg.from()).await;
     let (text, is_formatted) = format_text_for_mastodon(&msg_text);
 
     status.status(text);
@@ -213,23 +213,30 @@ fn format_text_for_mastodon<'a>(msg_text: &'a MessageText) -> (Cow<'a, str>, boo
     (text.into(), is_formatted)
 }
 
-fn append_source(
-    msg_text: &mut MessageText,
+async fn append_source<'a>(
+    bot: &Bot,
+    msg_text: &mut MessageText<'a>,
     enable: Option<bool>,
     msg: &Message,
     trigger: Option<&User>,
 ) -> bool {
-    const SRC_PREFIX: &str = "\n\n-----\nForward from Telegram";
-    const SRC_PREFIX_USER: &str = formatcp!("{SRC_PREFIX} user");
+    const SRC_PREFIX: &str = "\n\n-----\nFrom";
 
-    fn forward_source(msg_text: &mut MessageText, msg: &Message) -> bool {
+    async fn forward_source<'a>(bot: &Bot, msg_text: &mut MessageText<'a>, msg: &Message) -> bool {
         let Some(forward) = msg.forward() else {
             return false
         };
 
+        if util::is_from_linked_channel(bot, msg)
+            .await
+            .unwrap_or(false)
+        {
+            return false;
+        }
+
         match &forward.from {
             ForwardedFrom::User(user) => {
-                msg_text.append_text(format!("{SRC_PREFIX_USER} \"{}\"", user.full_name()));
+                msg_text.append_text(format!("{SRC_PREFIX} \"{}\"", user.full_name()));
                 if let Some(username) = &user.username {
                     msg_text.append_text(format!(" (@{username})"));
                 }
@@ -244,14 +251,19 @@ fn append_source(
                 }
             }
             ForwardedFrom::SenderName(name) => {
-                msg_text.append_text(format!("{SRC_PREFIX_USER} \"{name}\""));
+                msg_text.append_text(format!("{SRC_PREFIX} \"{name}\""));
             }
         }
 
         true
     }
 
-    fn sender_source(trigger: Option<&User>, msg_text: &mut MessageText, msg: &Message) -> bool {
+    fn sender_source(
+        trigger: Option<&User>,
+        exclude_channal: bool,
+        msg_text: &mut MessageText,
+        msg: &Message,
+    ) -> bool {
         let sender = msg.sender_chat();
         let from = msg.from().filter(|user| {
             (trigger.is_none() || trigger.filter(|t| user.id != t.id).is_some()) // alternative: `.is_some_and()`, still unstable
@@ -259,7 +271,9 @@ fn append_source(
                 && !user.is_channel()
         });
 
-        if sender.is_none() && from.is_none() {
+        if sender.is_none() && from.is_none()
+            || exclude_channal && sender.map(|s| s.is_channel()).unwrap_or(false)
+        {
             return false;
         }
 
@@ -267,7 +281,7 @@ fn append_source(
             (None, None) => unreachable!(),
             (Some(chat), _) => {
                 msg_text.append_text(format!(
-                    "{SRC_PREFIX_USER} \"{}\"",
+                    "{SRC_PREFIX} \"{}\"",
                     util::text::chat_display_name(chat)
                 ));
                 if let Some(username) = &chat.username() {
@@ -275,7 +289,7 @@ fn append_source(
                 }
             }
             (None, Some(user)) => {
-                msg_text.append_text(format!("{SRC_PREFIX_USER} \"{}\"", user.full_name()));
+                msg_text.append_text(format!("{SRC_PREFIX} \"{}\"", user.full_name()));
                 if let Some(username) = &user.username {
                     msg_text.append_text(format!(" (@{username})"));
                 }
@@ -290,10 +304,10 @@ fn append_source(
             // auto
             //
             // if-then `forward.source`
-            // else-if `sender != self` then `sender`
+            // else-if `sender != self && sender != channel` then `sender`
             // else-then `ignore`
 
-            forward_source(msg_text, msg) || sender_source(trigger, msg_text, msg)
+            forward_source(bot, msg_text, msg).await || sender_source(trigger, true, msg_text, msg)
         }
         Some(true) => {
             // force enable
@@ -301,7 +315,7 @@ fn append_source(
             // if-then `forward.source`
             // else-then `sender`
 
-            forward_source(msg_text, msg) || sender_source(None, msg_text, msg)
+            forward_source(bot, msg_text, msg).await || sender_source(None, false, msg_text, msg)
         }
         Some(false) => {
             // force disable
