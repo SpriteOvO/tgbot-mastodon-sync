@@ -15,6 +15,8 @@ use teloxide::{
     utils::command::BotCommands,
 };
 
+use crate::util::handle;
+
 pub struct InstanceState {
     pub db: db::Pool,
 }
@@ -39,7 +41,7 @@ pub async fn run(bot_token: impl Into<String>, db_url: impl AsRef<str>) -> anyho
                 Update::filter_message()
                     .inspect_async(
                         |state: Arc<InstanceState>, bot: Bot, me: Me, msg: Message| async move {
-                            let req = handler::Request::new_message(state, bot, me, msg);
+                            let req = handle::Request::new_message(state, bot, me, msg);
                             _ = handler::handle(req).await;
                         },
                     )
@@ -49,14 +51,14 @@ pub async fn run(bot_token: impl Into<String>, db_url: impl AsRef<str>) -> anyho
                          me: Me,
                          msg: Message,
                          cmd: Command| async move {
-                            let req = handler::Request::new_command(state, bot, me, msg, cmd);
+                            let req = handle::Request::new_command(state, bot, me, msg, cmd);
                             handler::handle(req).await
                         },
                     )),
             )
             .branch(Update::filter_edited_message().inspect_async(
                 |state: Arc<InstanceState>, bot: Bot, me: Me, msg: Message| async move {
-                    let req = handler::Request::edited_message(state, bot, me, msg);
+                    let req = handle::Request::edited_message(state, bot, me, msg);
                     _ = handler::handle(req).await;
                 },
             ));

@@ -23,7 +23,7 @@ SELECT tg_user_id
 FROM mastodon_login_user
         "#,
     )
-    .fetch_all(req.meta.state.db.pool())
+    .fetch_all(req.state().db.pool())
     .await
     .map_err(|err| Response::reply_to(err.to_string()))?;
 
@@ -31,8 +31,7 @@ FROM mastodon_login_user
         let user_id = UserId(record.tg_user_id as u64);
 
         let status: Cow<'a, str> = match req
-            .meta
-            .bot
+            .bot()
             .send_message(user_id, &content)
             .disable_web_page_preview(true)
             .await

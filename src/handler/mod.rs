@@ -6,134 +6,35 @@ mod ping;
 mod post;
 mod start;
 
-use std::{borrow::Cow, env, sync::Arc};
+use std::{env, sync::Arc};
 
 use spdlog::prelude::*;
-use teloxide::{
-    prelude::*,
-    types::{ChatKind, Me},
-};
+use teloxide::{prelude::*, types::ChatKind};
 
 use crate::{
     cmd::Command,
     config,
-    util::{media, ProgMsg},
+    util::{
+        handle::{self, RequestKind::*, Response, ResponseKind::*},
+        media, ProgMsg,
+    },
     InstanceState,
 };
 
-struct RequestMeta {
-    state: Arc<InstanceState>,
-    bot: Bot,
-    me: Me,
-    msg: Message,
-}
-
-enum RequestKind {
-    NewMessage,
-    EditedMessage,
-    Command(Command),
-}
-
-pub struct Request {
-    meta: RequestMeta,
-    kind: RequestKind,
-}
-
-impl Request {
-    pub fn new_message(state: Arc<InstanceState>, bot: Bot, me: Me, msg: Message) -> Self {
-        Self {
-            meta: RequestMeta {
-                state,
-                bot,
-                me,
-                msg,
-            },
-            kind: RequestKind::NewMessage,
-        }
-    }
-
-    pub fn edited_message(state: Arc<InstanceState>, bot: Bot, me: Me, msg: Message) -> Self {
-        Self {
-            meta: RequestMeta {
-                state,
-                bot,
-                me,
-                msg,
-            },
-            kind: RequestKind::EditedMessage,
-        }
-    }
-
-    pub fn new_command(
-        state: Arc<InstanceState>,
-        bot: Bot,
-        me: Me,
-        msg: Message,
-        cmd: Command,
-    ) -> Self {
-        Self {
-            meta: RequestMeta {
-                state,
-                bot,
-                me,
-                msg,
-            },
-            kind: RequestKind::Command(cmd),
-        }
-    }
-}
-
-pub enum ResponseKind<'a> {
-    Nothing,
-    ReplyTo(Cow<'a, str>),
-    NewMsg(Cow<'a, str>),
-}
-
-pub struct Response<'a> {
-    kind: ResponseKind<'a>,
-    disable_preview: bool,
-}
-
-impl<'a> Response<'a> {
-    pub fn nothing() -> Self {
-        Self {
-            kind: ResponseKind::Nothing,
-            disable_preview: false,
-        }
-    }
-
-    pub fn reply_to(text: impl Into<Cow<'a, str>>) -> Self {
-        Self {
-            kind: ResponseKind::ReplyTo(text.into()),
-            disable_preview: false,
-        }
-    }
-
-    pub fn new_msg(text: impl Into<Cow<'a, str>>) -> Self {
-        Self {
-            kind: ResponseKind::NewMsg(text.into()),
-            disable_preview: false,
-        }
-    }
-
-    pub fn disable_preview(mut self) -> Self {
-        self.disable_preview = true;
-        self
-    }
-}
+type Request = handle::Request<Arc<InstanceState>, Command>;
 
 pub async fn handle(req: Request) -> Result<(), teloxide::RequestError> {
     let req = &req;
-    let chat_id = req.meta.msg.chat.id;
+    let chat_id = req.msg().chat.id;
 
     let res = handle_kind(req).await;
     let (succeeded, Ok(resp) | Err(resp)) = (res.is_ok(), res);
 
     let reply = |text, reply_to_msg_id, disable_preview: bool| async move {
         let mut req = if succeeded {
-            req.meta.bot.send_message(chat_id, text)
+            req.bot().send_message(chat_id, text)
         } else {
-            req.meta.bot.send_message(chat_id, format!("⚠️ {text}"))
+            req.bot().send_message(chat_id, format!("⚠️ {text}"))
         };
         if let Some(reply_to_msg_id) = reply_to_msg_id {
             req = req.reply_to_message_id(reply_to_msg_id);
@@ -145,9 +46,9 @@ pub async fn handle(req: Request) -> Result<(), teloxide::RequestError> {
     };
 
     match resp.kind {
-        ResponseKind::Nothing => return Ok(()),
-        ResponseKind::ReplyTo(text) => reply(text, Some(req.meta.msg.id), resp.disable_preview),
-        ResponseKind::NewMsg(text) => reply(text, None, resp.disable_preview),
+        Nothing => return Ok(()),
+        ReplyTo(text) => reply(text, Some(req.msg().id), resp.disable_preview),
+        NewMsg(text) => reply(text, None, resp.disable_preview),
     }
     .await?;
 
@@ -155,36 +56,32 @@ pub async fn handle(req: Request) -> Result<(), teloxide::RequestError> {
 }
 
 async fn handle_kind(req: &Request) -> Result<Response<'_>, Response<'_>> {
-    match &req.kind {
-        RequestKind::NewMessage => handle_new_message(req).await,
-        RequestKind::EditedMessage => handle_edited_message(req).await,
-        RequestKind::Command(cmd) => handle_command(req, cmd).await,
+    match req.kind() {
+        NewMessage => handle_new_message(req).await,
+        EditedMessage => handle_edited_message(req).await,
+        Command(cmd) => handle_command(req, cmd).await,
     }
 }
 
 async fn handle_new_message(req: &Request) -> Result<Response<'_>, Response<'_>> {
-    let (state, msg) = (&req.meta.state, &req.meta.msg);
-
     trace!(
         "new message. chat id '{}', msg id '{}'",
-        msg.chat.id,
-        msg.id
+        req.msg().chat.id,
+        req.msg().id
     );
 
-    media::on_new_or_edited_message(state, msg).await;
+    media::on_new_or_edited_message(req.state(), req.msg()).await;
     Ok(Response::nothing())
 }
 
 async fn handle_edited_message(req: &Request) -> Result<Response<'_>, Response<'_>> {
-    let (state, msg) = (&req.meta.state, &req.meta.msg);
-
     trace!(
         "edited message. chat id '{}', msg id '{}'",
-        msg.chat.id,
-        msg.id
+        req.msg().chat.id,
+        req.msg().id
     );
 
-    media::on_new_or_edited_message(state, msg).await;
+    media::on_new_or_edited_message(req.state(), req.msg()).await;
     Ok(Response::nothing())
 }
 
@@ -206,19 +103,19 @@ async fn handle_command<'a>(
             auth::revoke(req).await
         }
         Command::Post(arg) => {
-            let mut prog_msg = ProgMsg::new(&req.meta.bot, &req.meta.msg, "Synchronizing...");
+            let mut prog_msg = ProgMsg::new(req.bot(), req.msg(), "Synchronizing...");
             post::handle(req, &mut prog_msg, arg).await
         }
         Command::Broadcast(arg) => {
             require_admin(req)?;
-            let mut prog_msg = ProgMsg::new(&req.meta.bot, &req.meta.msg, "Broadcasting...");
+            let mut prog_msg = ProgMsg::new(req.bot(), req.msg(), "Broadcasting...");
             broadcast::handle(req, &mut prog_msg, arg).await
         }
     }
 }
 
 fn require_private(req: &Request) -> Result<(), Response<'_>> {
-    match req.meta.msg.chat.kind {
+    match req.msg().chat.kind {
         ChatKind::Private(_) => Ok(()),
         ChatKind::Public(_) => Err(Response::reply_to(
             "This command is only available in direct messages.",
@@ -235,7 +132,7 @@ fn require_admin(req: &Request) -> Result<(), Response<'_>> {
         return Err(Response::reply_to(format!("Admin user id is not set or invalid.\nPlease set env var `{}` on your server.", config::ADMIN_TG_USER_ID_ENV_VAR)))
     };
 
-    if req.meta.msg.from().map(|u| u.id.0) != Some(admin_tg_user_id) {
+    if req.msg().from().map(|u| u.id.0) != Some(admin_tg_user_id) {
         Err(Response::reply_to("🎶 Never Gonna Give You Up 🎶"))
     } else {
         Ok(())

@@ -40,21 +40,22 @@ pub async fn handle<'a>(
     prog_msg: &mut ProgMsg<'a>,
     arg: impl Into<String>,
 ) -> Result<Response<'a>, Response<'a>> {
-    let (state, bot, msg) = (&req.meta.state, &req.meta.bot, &req.meta.msg);
-
     let args = PostArgs::parse(arg.into())
         .map_err(|err| Response::reply_to(format!("Failed to parse arguments.\n\n{err}")))?;
     if args.help {
         return Ok(Response::reply_to(PostArgs::help()));
     }
 
-    let user = msg.from().ok_or_else(|| Response::reply_to("No user."))?;
+    let user = req
+        .msg()
+        .from()
+        .ok_or_else(|| Response::reply_to("No user."))?;
 
-    let Some(reply_to_msg) = msg.reply_to_message() else {
+    let Some(reply_to_msg) = req.msg().reply_to_message() else {
         return Ok(Response::reply_to(PostArgs::help()));
     };
 
-    let client = mastodon::Client::new(Arc::clone(state));
+    let client = mastodon::Client::new(Arc::clone(req.state()));
     let login_user = client.login(user.id).await.map_err(|err| {
         warn!("user '{}' login mastodon failed: {err}", user.id);
         Response::reply_to("Please use /auth to link your mastodon account first.")
@@ -66,10 +67,12 @@ pub async fn handle<'a>(
 
     status.visibility(Visibility::Public);
 
-    let media = Media::query(state, reply_to_msg).await.map_err(|err| {
-        error!("user '{}' failed to query media: {err}", user.id);
-        Response::reply_to(format!("Failed to query media.\n\n{err}"))
-    })?;
+    let media = Media::query(req.state(), reply_to_msg)
+        .await
+        .map_err(|err| {
+            error!("user '{}' failed to query media: {err}", user.id);
+            Response::reply_to(format!("Failed to query media.\n\n{err}"))
+        })?;
 
     let (text, entities) = if let Some(media) = media.as_ref() {
         let files = media
@@ -93,7 +96,7 @@ pub async fn handle<'a>(
                 )
                 .await;
 
-            let file = bot.get_file(&file.id).await.map_err(|err| {
+            let file = req.bot().get_file(&file.id).await.map_err(|err| {
                 error!("user '{}' failed to get file meta: {err}", user.id);
                 Response::reply_to(format!("Failed to get file meta.\n\n{err}"))
             })?;
@@ -106,7 +109,7 @@ pub async fn handle<'a>(
                     // freeze. I haven't figured out why.
                     let mut reader = reader;
 
-                    bot.download_file(&file.path, &mut reader).await
+                    req.bot().download_file(&file.path, &mut reader).await
                 },
                 async { login_user.attach_media(writer, None).await }
             );
@@ -141,7 +144,14 @@ pub async fn handle<'a>(
         status.language(lang);
     }
 
-    let with_src = append_source(bot, &mut msg_text, args.src, reply_to_msg, msg.from()).await;
+    let with_src = append_source(
+        req.bot(),
+        &mut msg_text,
+        args.src,
+        reply_to_msg,
+        req.msg().from(),
+    )
+    .await;
     let (text, is_formatted) = format_text_for_mastodon(&msg_text);
 
     status.status(text);
