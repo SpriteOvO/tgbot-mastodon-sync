@@ -3,6 +3,8 @@ use teloxide::{
     types::{Message, MessageId},
 };
 
+use super::handle::{Response, ResponseKind};
+
 pub struct ProgMsg<'a> {
     bot: &'a Bot,
     trigger_msg: &'a Message,
@@ -11,6 +13,7 @@ pub struct ProgMsg<'a> {
     history: Vec<String>,
     msg_id: Option<MessageId>,
     last_unsaved: Option<String>,
+    is_mapped: bool,
 }
 
 impl<'a> ProgMsg<'a> {
@@ -23,6 +26,7 @@ impl<'a> ProgMsg<'a> {
             history: vec![],
             msg_id: None,
             last_unsaved: None,
+            is_mapped: false,
         }
     }
 
@@ -33,6 +37,7 @@ impl<'a> ProgMsg<'a> {
     pub async fn update(&mut self, status: impl Into<String>, save_to_history: bool) {
         let status = status.into();
 
+        self.is_mapped = false;
         if save_to_history {
             if let Some(last_unsaved) = self.last_unsaved.take() {
                 self.history.push(last_unsaved);
@@ -66,6 +71,38 @@ impl<'a> ProgMsg<'a> {
             self.last_unsaved = Some(status);
         }
     }
+
+    pub async fn map(&mut self, resp: Response<'a>) -> Response<'a> {
+        self.is_mapped = true;
+
+        let Some(msg_id) = self.msg_id else {
+            return resp;
+        };
+
+        if let ResponseKind::ReplyTo(text) = resp.kind {
+            _ = self
+                .bot
+                .edit_message_text(self.trigger_msg.chat.id, msg_id, text)
+                .disable_web_page_preview(true)
+                .await;
+
+            self.delete_on_drop = false;
+
+            Response::nothing()
+        } else {
+            resp
+        }
+    }
+
+    pub async fn map_res(
+        &mut self,
+        resp: Result<Response<'a>, Response<'a>>,
+    ) -> Result<Response<'a>, Response<'a>> {
+        match resp {
+            Ok(resp) => Ok(self.map(resp).await),
+            Err(resp) => Err(self.map(resp).await),
+        }
+    }
 }
 
 impl<'a> ProgMsg<'a> {
@@ -94,7 +131,7 @@ impl<'a> Drop for ProgMsg<'a> {
                 tokio::spawn(async move {
                     _ = bot.delete_message(chat_id, msg_id).await;
                 });
-            } else {
+            } else if !self.is_mapped {
                 let text = self.format(None as Option<&str>);
                 tokio::spawn(async move {
                     _ = bot.edit_message_text(chat_id, msg_id, text).await;

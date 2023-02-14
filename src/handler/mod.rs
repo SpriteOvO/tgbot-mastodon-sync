@@ -104,12 +104,14 @@ async fn handle_command<'a>(
         }
         Command::Post(arg) => {
             let mut prog_msg = ProgMsg::new(req.bot(), req.msg(), "Synchronizing...");
-            post::handle(req, &mut prog_msg, arg).await
+            let res = post::handle(req, &mut prog_msg, arg).await;
+            prog_msg.map_res(res).await
         }
         Command::Broadcast(arg) => {
             require_admin(req)?;
             let mut prog_msg = ProgMsg::new(req.bot(), req.msg(), "Broadcasting...");
-            broadcast::handle(req, &mut prog_msg, arg).await
+            let res = broadcast::handle(req, &mut prog_msg, arg).await;
+            prog_msg.map_res(res).await
         }
     }
 }
