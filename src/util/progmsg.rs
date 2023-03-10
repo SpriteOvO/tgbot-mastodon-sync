@@ -82,7 +82,8 @@ impl<'a> ProgMsg<'a> {
         if let ResponseKind::ReplyTo(text) = resp.kind {
             _ = self
                 .bot
-                .edit_message_text(self.trigger_msg.chat.id, msg_id, text)
+                .edit_message_text(self.trigger_msg.chat.id, msg_id, text.text())
+                .entities(text.into_entities())
                 .disable_web_page_preview(true)
                 .await;
 

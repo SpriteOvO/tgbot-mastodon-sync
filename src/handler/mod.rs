@@ -9,14 +9,16 @@ mod start;
 use std::{env, sync::Arc};
 
 use spdlog::prelude::*;
-use teloxide::{prelude::*, types::ChatKind};
+use teloxide::{payloads::SendMessageSetters, prelude::*, types::ChatKind};
 
 use crate::{
     cmd::Command,
     config,
     util::{
         handle::{self, RequestKind::*, Response, ResponseKind::*},
-        media, ProgMsg,
+        media,
+        text::*,
+        ProgMsg,
     },
     InstanceState,
 };
@@ -30,27 +32,22 @@ pub async fn handle(req: Request) -> Result<(), teloxide::RequestError> {
     let res = handle_kind(req).await;
     let (succeeded, Ok(resp) | Err(resp)) = (res.is_ok(), res);
 
-    let reply = |text, reply_to_msg_id, disable_preview: bool| async move {
-        let mut req = if succeeded {
-            req.bot().send_message(chat_id, text)
-        } else {
-            req.bot().send_message(chat_id, format!("⚠️ {text}"))
-        };
+    let reply = |mut text: MessageText<'_>, reply_to_msg_id| {
+        if !succeeded {
+            text.prepend("⚠️ ");
+        }
+        let mut req = text.executor(req.bot()).send_message(chat_id);
         if let Some(reply_to_msg_id) = reply_to_msg_id {
             req = req.reply_to_message_id(reply_to_msg_id);
         }
-        if disable_preview {
-            req = req.disable_web_page_preview(disable_preview);
-        }
-        req.await
+        req
     };
 
     match resp.kind {
         Nothing => return Ok(()),
-        ReplyTo(text) => reply(text, Some(req.msg().id), resp.disable_preview),
-        NewMsg(text) => reply(text, None, resp.disable_preview),
-    }
-    .await?;
+        ReplyTo(text) => reply(text, Some(req.msg().id)).await,
+        NewMsg(text) => reply(text, None).await,
+    }?;
 
     Ok(())
 }

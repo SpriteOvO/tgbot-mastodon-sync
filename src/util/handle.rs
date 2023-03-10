@@ -1,6 +1,6 @@
-use std::borrow::Cow;
-
 use teloxide::{prelude::*, types::Me};
+
+use crate::util::text::*;
 
 pub enum RequestKind<C> {
     NewMessage,
@@ -70,39 +70,30 @@ impl<S, C> Request<S, C> {
 
 pub enum ResponseKind<'a> {
     Nothing,
-    ReplyTo(Cow<'a, str>),
-    NewMsg(Cow<'a, str>),
+    ReplyTo(MessageText<'a>),
+    NewMsg(MessageText<'a>),
 }
 
 pub struct Response<'a> {
     pub kind: ResponseKind<'a>,
-    pub disable_preview: bool,
 }
 
 impl<'a> Response<'a> {
     pub fn nothing() -> Self {
         Self {
             kind: ResponseKind::Nothing,
-            disable_preview: false,
         }
     }
 
-    pub fn reply_to(text: impl Into<Cow<'a, str>>) -> Self {
+    pub fn reply_to(text: impl Into<MessageText<'a>>) -> Self {
         Self {
             kind: ResponseKind::ReplyTo(text.into()),
-            disable_preview: false,
         }
     }
 
-    pub fn new_msg(text: impl Into<Cow<'a, str>>) -> Self {
+    pub fn new_msg(text: impl Into<MessageText<'a>>) -> Self {
         Self {
             kind: ResponseKind::NewMsg(text.into()),
-            disable_preview: false,
         }
-    }
-
-    pub fn disable_preview(mut self) -> Self {
-        self.disable_preview = true;
-        self
     }
 }

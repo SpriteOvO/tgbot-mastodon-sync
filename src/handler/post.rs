@@ -19,7 +19,7 @@ use crate::{
     util::{
         self,
         media::{Media, MediaKind},
-        text::MessageText,
+        text::*,
         ProgMsg,
     },
 };
@@ -52,7 +52,7 @@ pub async fn handle<'a>(
         .ok_or_else(|| Response::reply_to("No user."))?;
 
     let Some(reply_to_msg) = req.msg().reply_to_message() else {
-        return Ok(Response::reply_to(PostArgs::help()));
+        return Ok(Response::reply_to(mtb().pre(PostArgs::help()).build()));
     };
 
     let client = mastodon::Client::new(Arc::clone(req.state()));
@@ -183,10 +183,14 @@ pub async fn handle<'a>(
     }
     info.push_str(if with_src { "w/ src" } else { "w/o src" });
 
-    Ok(Response::reply_to(format!(
-        "Synchronized successfully. \n\n({info})\n{posted_url}",
+    Ok(Response::reply_to(
+        mtb()
+            .plain(format!(
+                "Synchronized successfully. \n\n({info})\n{posted_url}",
+            ))
+            .disable_preview()
+            .build(),
     ))
-    .disable_preview())
 }
 
 fn format_text_for_mastodon<'a>(msg_text: &'a MessageText) -> (Cow<'a, str>, bool) {

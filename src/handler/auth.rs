@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use crate::{
     handler::{Request, Response},
     mastodon,
+    util::text::*,
 };
 
 static AUTH_DOMAIN_CACHE: Lazy<Mutex<HashMap<UserId, String>>> =
@@ -32,9 +33,13 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
             .into(),
         };
 
-        return Err(Response::reply_to(format!(
-            "{response}\n\nformat: /auth <domain or auth-code>"
-        )));
+        return Err(Response::reply_to(
+            mtb()
+                .plain(response)
+                .plain("\n\nformat: ")
+                .code("/auth <domain or auth-code>")
+                .build(),
+        ));
     }
 
     info!("user '{}' trying to auth mastodon", user.id);
@@ -48,7 +53,7 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
             let url = client.authorization_url(&domain).await.map_err(|err| {
                 error!("failed to obtain authorization url for domain '{domain}', err: '{err}'");
                 Response::reply_to(format!(
-                    "Failed to obtain authorization url for domain '{domain}\n\n{err}"
+                    "Failed to obtain authorization url for domain '{domain}'\n\n{err}"
                 ))
             })?;
 
