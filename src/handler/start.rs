@@ -1,7 +1,6 @@
-use crate::{
-    handler::{Request, Response},
-    util::text::*,
-};
+use tgbot_utils::text::*;
+
+use crate::handler::{Request, Response};
 
 pub async fn handle<'a>(_req: &Request) -> Result<Response<'a>, Response<'a>> {
     Ok(Response::reply_to(

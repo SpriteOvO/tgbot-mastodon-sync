@@ -1,11 +1,9 @@
 use std::borrow::Cow;
 
 use teloxide::{prelude::*, requests::Requester};
+use tgbot_utils::ProgMsg;
 
-use crate::{
-    handler::{Request, Response, UserId},
-    util::ProgMsg,
-};
+use crate::handler::{Request, Response, UserId};
 
 pub async fn handle<'a>(
     req: &Request,

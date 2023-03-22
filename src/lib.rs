@@ -3,7 +3,6 @@ pub mod config;
 mod db;
 mod handler;
 mod mastodon;
-mod util;
 
 use std::sync::Arc;
 
@@ -14,8 +13,7 @@ use teloxide::{
     types::{Me, Update},
     utils::command::BotCommands,
 };
-
-use crate::util::handle;
+use tgbot_utils::handle;
 
 pub struct InstanceState {
     pub db: db::Pool,

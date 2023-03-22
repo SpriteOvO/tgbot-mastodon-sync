@@ -9,19 +9,20 @@ use teloxide::{
     requests::Requester,
     types::{FileMeta, ForwardedFrom, MediaKind::*, Message, MessageEntityKind, User},
 };
+use tgbot_utils::{
+    self as utils,
+    cmd_arg::*,
+    define_cmd_args,
+    media::{Media, MediaKind},
+    text::*,
+    ProgMsg,
+};
 use tokio::io;
 
 use crate::{
-    cmd::{define_cmd_args, Args},
     config,
     handler::{Request, Response},
     mastodon::{self, Language as MLanguage, *},
-    util::{
-        self,
-        media::{Media, MediaKind},
-        text::*,
-        ProgMsg,
-    },
 };
 
 fn filter_media(media: &MediaKind) -> Option<&FileMeta> {
@@ -67,7 +68,7 @@ pub async fn handle<'a>(
 
     status.visibility(Visibility::Public);
 
-    let media = Media::query(req.state(), reply_to_msg)
+    let media = Media::query(|| req.state().db.pool(), reply_to_msg)
         .await
         .map_err(|err| {
             error!("user '{}' failed to query media: {err}", user.id);
@@ -241,7 +242,7 @@ async fn append_source<'a>(
             return false
         };
 
-        if util::is_from_linked_channel(bot, msg)
+        if utils::is_from_linked_channel(bot, msg)
             .await
             .unwrap_or(false)
         {
@@ -256,10 +257,7 @@ async fn append_source<'a>(
                 }
             }
             ForwardedFrom::Chat(chat) => {
-                msg_text.append_text(format!(
-                    "{SRC_PREFIX} \"{}\"",
-                    util::text::chat_display_name(chat)
-                ));
+                msg_text.append_text(format!("{SRC_PREFIX} \"{}\"", chat_display_name(chat)));
                 if let Some(username) = &chat.username() {
                     msg_text.append_text(format!(" (@{username})"));
                 }
@@ -294,10 +292,7 @@ async fn append_source<'a>(
         match (sender, from) {
             (None, None) => unreachable!(),
             (Some(chat), _) => {
-                msg_text.append_text(format!(
-                    "{SRC_PREFIX} \"{}\"",
-                    util::text::chat_display_name(chat)
-                ));
+                msg_text.append_text(format!("{SRC_PREFIX} \"{}\"", chat_display_name(chat)));
                 if let Some(username) = &chat.username() {
                     msg_text.append_text(format!(" (@{username})"));
                 }

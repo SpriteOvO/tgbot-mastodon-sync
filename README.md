@@ -23,7 +23,7 @@ You have two ways to install the binary.
 - Install from git repository.
 
   ```bash
-  git clone https://github.com/SpriteOvO/tgbot-mastodon-sync.git
+  git clone https://github.com/SpriteOvO/tgbot-mastodon-sync.git --recursive
   cd tgbot-mastodon-sync
   git checkout <latest-version>
   cargo install --path .

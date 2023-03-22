@@ -3,12 +3,12 @@ use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use once_cell::sync::Lazy;
 use spdlog::prelude::*;
 use teloxide::types::UserId;
+use tgbot_utils::text::*;
 use tokio::sync::Mutex;
 
 use crate::{
     handler::{Request, Response},
     mastodon,
-    util::text::*,
 };
 
 static AUTH_DOMAIN_CACHE: Lazy<Mutex<HashMap<UserId, String>>> =

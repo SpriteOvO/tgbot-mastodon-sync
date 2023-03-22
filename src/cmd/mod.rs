@@ -1,6 +1,3 @@
-mod arg;
-
-pub(crate) use arg::*;
 use teloxide::utils::command::BotCommands;
 
 #[derive(BotCommands, Clone)]

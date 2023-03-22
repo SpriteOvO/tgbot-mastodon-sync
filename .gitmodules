@@ -1,0 +1,3 @@
+[submodule "tgbot-utils"]
+	path = tgbot-utils
+	url = https://github.com/SpriteOvO/tgbot-utils.git

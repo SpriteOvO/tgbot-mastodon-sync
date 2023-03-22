@@ -22,6 +22,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
+      with:
+        submodules: true
     - name: Install nightly
       run: |
         rustup toolchain install nightly
@@ -36,6 +38,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
+      with:
+        submodules: true
     - name: Install Rust
       run: rustup toolchain install stable
     - name: Install dependencies
@@ -52,6 +56,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
+      with:
+        submodules: true
     - name: Install Rust
       run: rustup toolchain install stable
     - name: Install dependencies
@@ -68,6 +74,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
+      with:
+        submodules: true
     - name: Install Rust
       run: rustup toolchain install stable
     - name: Restore cargo caches
@@ -80,6 +88,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
+      with:
+        submodules: true
     - name: Install Rust
       run: rustup toolchain install stable
     - name: Restore cargo caches

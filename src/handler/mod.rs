@@ -10,18 +10,14 @@ use std::{env, sync::Arc};
 
 use spdlog::prelude::*;
 use teloxide::{payloads::SendMessageSetters, prelude::*, types::ChatKind};
-
-use crate::{
-    cmd::Command,
-    config,
-    util::{
-        handle::{self, RequestKind::*, Response, ResponseKind::*},
-        media,
-        text::*,
-        ProgMsg,
-    },
-    InstanceState,
+use tgbot_utils::{
+    handle::{self, RequestKind::*, Response, ResponseKind::*},
+    media,
+    text::*,
+    ProgMsg,
 };
+
+use crate::{cmd::Command, config, InstanceState};
 
 type Request = handle::Request<Arc<InstanceState>, Command>;
 
@@ -67,7 +63,7 @@ async fn handle_new_message(req: &Request) -> Result<Response<'_>, Response<'_>>
         req.msg().id
     );
 
-    media::on_new_or_edited_message(req.state(), req.msg()).await;
+    media::on_new_or_edited_message(|| req.state().db.pool(), req.msg()).await;
     Ok(Response::nothing())
 }
 
@@ -78,7 +74,7 @@ async fn handle_edited_message(req: &Request) -> Result<Response<'_>, Response<'
         req.msg().id
     );
 
-    media::on_new_or_edited_message(req.state(), req.msg()).await;
+    media::on_new_or_edited_message(|| req.state().db.pool(), req.msg()).await;
     Ok(Response::nothing())
 }
 
