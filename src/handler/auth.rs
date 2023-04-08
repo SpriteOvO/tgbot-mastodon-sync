@@ -52,9 +52,7 @@ pub async fn auth(req: &Request, arg: impl Into<String>) -> Result<Response<'_>,
             let domain = arg;
             let url = client.authorization_url(&domain).await.map_err(|err| {
                 error!("failed to obtain authorization url for domain '{domain}', err: '{err}'");
-                Response::reply_to(format!(
-                    "Failed to obtain authorization url for domain '{domain}'\n\n{err}"
-                ))
+                Response::reply_to(mtb().plain(format!("Failed to obtain authorization url for domain '{domain}'\n\nNote that the domain must starts with a schema (e.g. ")).code("https://").plain(")").build())
             })?;
 
             auth_domain_cache.insert(user.id, domain);
